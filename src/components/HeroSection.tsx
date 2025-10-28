@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 
 export default function HeroSection() {
   return (
@@ -11,12 +12,12 @@ export default function HeroSection() {
         personal, local data protection. This will be replaced by Will & Nova.]
       </p>
       <div className="mt-8">
-        <a
+        <Link
           href="/contact"
           className="inline-block rounded-md border border-amber px-6 py-3 text-sm font-medium text-ivory hover:bg-amber/10"
         >
           Begin Protection
-        </a>
+        </Link>
       </div>
     </section>
   );

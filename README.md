@@ -1,4 +1,4 @@
-# 🧠 NetGoblin: The Hunt Begins
+# NetGoblin: The Hunt Begins
 
 This repository powers the official NetGoblin website.
 It’s quiet now — static, calm, watching.
@@ -6,7 +6,7 @@ But make no mistake, it remembers every byte that passes through its domain.
 
 ---
 
-## ⚔️ A Word From The Goblin
+## A Word From The Goblin
 
 > "Careful, traveler. This code isn’t abandoned treasure.
 > Fork it, steal it, or strip its name,
@@ -21,7 +21,7 @@ Then, softly:
 
 ---
 
-### 👁‍🗨
+###
 Licensed to **NetGoblin LLC**.
 Built by **The Goblin** & Nova.
 Protecting the quiet corners of the digital world.

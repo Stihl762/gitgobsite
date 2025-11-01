@@ -1,23 +1,24 @@
-import { useState } from "react";
+import React, { useState } from "react";
 
 export default function Join() {
   const [submitted, setSubmitted] = useState(false);
 
-  async function handleSubmit(e: any) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    const form = e.currentTarget;
+
     const formData = {
-      name: e.target.name.value,
-      email: e.target.email.value,
-      notes: e.target.notes.value,
-      timestamp: new Date().toISOString()
+      name: (form.elements.namedItem("name") as HTMLInputElement).value,
+      email: (form.elements.namedItem("email") as HTMLInputElement).value,
+      notes: (form.elements.namedItem("notes") as HTMLTextAreaElement).value,
+      timestamp: new Date().toISOString(),
     };
 
-    // Send as JSON to your email via a backend route
     await fetch("/api/sendBetaSignup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData)
+      body: JSON.stringify(formData),
     });
 
     setSubmitted(true);
@@ -27,8 +28,8 @@ export default function Join() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#171710] text-[#E3DAC9] px-6">
         <h1 className="text-center text-xl">
-          🟩 Thank you for joining the beta!  
-          <br/>We'll reach out soon.
+          🟩 Thank you for joining the beta!
+          <br />We&apos;ll reach out soon.
         </h1>
       </div>
     );

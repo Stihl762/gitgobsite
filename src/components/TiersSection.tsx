@@ -1,6 +1,7 @@
 "use client";
 import { motion } from "framer-motion";
-import { TierId } from "../pages"; // if you use /app router, update import path accordingly
+
+export type TierId = "adventurer" | "hunter" | "tactician";
 
 interface TiersSectionProps {
   selectedTier: TierId;
@@ -9,13 +10,25 @@ interface TiersSectionProps {
   onSelectTier: (tier: TierId) => void;
 }
 
+interface Tier {
+  id: TierId;
+  name: string;
+  title: string;
+  monthly: string;
+  yearly: string;
+  bullets: string[];
+  aura: string;
+  border: string;
+  recommended?: boolean;
+}
+
 export default function TiersSection({
   selectedTier,
   billingYearly,
   onToggleBilling,
   onSelectTier,
 }: TiersSectionProps) {
-  const tiers = [
+  const tiers: Tier[] = [
     {
       id: "adventurer",
       name: "Adventurer",
@@ -62,7 +75,8 @@ export default function TiersSection({
     },
   ];
 
-  const getPrice = (t: any) => (billingYearly ? t.yearly : t.monthly);
+  const getPrice = (tier: Tier): string =>
+    billingYearly ? tier.yearly : tier.monthly;
 
   return (
     <section
@@ -74,7 +88,6 @@ export default function TiersSection({
         text-center
       "
     >
-      {/* Heading */}
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -86,16 +99,17 @@ export default function TiersSection({
           Choose Your Hunt
         </h2>
         <p className="text-sm sm:text-base text-[#E3DAC9]/75 mb-8 max-w-xl mx-auto">
-          Every hunter’s journey begins somewhere. Choose your level of defense and
-          join the goblin ranks protecting their names from the brokers’ fire.
+          Every hunter&apos;s journey begins somewhere. Choose your level of defense
+          and join the goblin ranks guarding their names from the brokers&apos; fire.
         </p>
 
-        {/* Billing toggle */}
         <div className="flex items-center justify-center gap-3 text-xs sm:text-sm mb-10">
           <span
-            className={`${
-              !billingYearly ? "text-[#FFBF00]" : "text-[#E3DAC9]/60"
-            }`}
+            className={
+              !billingYearly
+                ? "text-[#FFBF00]"
+                : "text-[#E3DAC9]/60"
+            }
           >
             Monthly
           </span>
@@ -110,20 +124,22 @@ export default function TiersSection({
             />
           </button>
           <span
-            className={`${
-              billingYearly ? "text-[#FFBF00]" : "text-[#E3DAC9]/60"
-            }`}
+            className={
+              billingYearly
+                ? "text-[#FFBF00]"
+                : "text-[#E3DAC9]/60"
+            }
           >
             Annual (save)
           </span>
         </div>
       </motion.div>
 
-      {/* Tier Cards */}
       <div className="grid gap-6 md:grid-cols-3 max-w-6xl mx-auto">
         {tiers.map((tier) => {
           const isSelected = tier.id === selectedTier;
           const isHunter = tier.id === "hunter";
+
           return (
             <motion.div
               key={tier.id}
@@ -139,16 +155,14 @@ export default function TiersSection({
                 }
                 ${isHunter ? "md:scale-105" : ""}
               `}
-              onClick={() => onSelectTier(tier.id as TierId)}
+              onClick={() => onSelectTier(tier.id)}
             >
-              {/* Badge for recommended */}
               {tier.recommended && (
                 <div className="absolute -top-3 left-5 px-2 py-0.5 rounded-full bg-[#FFBF00] text-[#171710] text-[10px] font-semibold">
                   🏹 Most Chosen
                 </div>
               )}
 
-              {/* Header */}
               <h3 className="text-xl font-bold text-[#E3DAC9] mb-2">
                 {tier.name}
               </h3>
@@ -156,19 +170,16 @@ export default function TiersSection({
                 {tier.title}
               </p>
 
-              {/* Feature bullets */}
               <ul className="text-xs sm:text-sm text-[#E3DAC9]/75 space-y-1 mb-4">
-                {tier.bullets.map((b: string) => (
+                {tier.bullets.map((b) => (
                   <li key={b}>• {b}</li>
                 ))}
               </ul>
 
-              {/* Price */}
               <div className="text-lg sm:text-xl font-semibold text-[#FFBF00] mb-5">
                 {getPrice(tier)}
               </div>
 
-              {/* CTA */}
               <button
                 className={`
                   w-full py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all
@@ -182,7 +193,6 @@ export default function TiersSection({
                 Protect Me
               </button>
 
-              {/* Hunter glow effect */}
               {isHunter && (
                 <div className="absolute inset-0 rounded-2xl pointer-events-none bg-gradient-to-b from-[#FFBF00]/10 to-transparent" />
               )}
@@ -191,7 +201,6 @@ export default function TiersSection({
         })}
       </div>
 
-      {/* Subtle reassurance below tiers */}
       <div className="mt-12 text-xs sm:text-sm text-[#E3DAC9]/60 max-w-md mx-auto leading-relaxed">
         🧩 Most goblins begin their journey as Hunters — balanced, powerful, and
         protected. Your path can always ascend when the next threat rises.

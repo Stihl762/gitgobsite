@@ -6,7 +6,10 @@ interface ExposureQuestionProps {
   onSelect: (level: "low" | "medium" | "high") => void;
 }
 
-export default function ExposureQuestion({ exposureLevel, onSelect }: ExposureQuestionProps) {
+export default function ExposureQuestion({
+  exposureLevel,
+  onSelect,
+}: ExposureQuestionProps) {
   return (
     <section
       className="
@@ -21,19 +24,18 @@ export default function ExposureQuestion({ exposureLevel, onSelect }: ExposureQu
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
         viewport={{ once: true }}
         className="relative z-10 max-w-2xl mx-auto"
       >
-        {/* Section title */}
         <h2 className="text-2xl sm:text-3xl font-bold text-[#E3DAC9] mb-4">
           How exposed do you feel online?
         </h2>
         <p className="text-sm sm:text-base text-[#E3DAC9]/75 mb-8">
-          Tell our goblins how bad it looks out there — we’ll tailor the hunt to your threat level.
+          Tell our goblins how bad it looks out there — we&apos;ll tailor the hunt
+          to your threat level.
         </p>
 
-        {/* Choice buttons */}
         <div className="flex flex-wrap justify-center gap-4">
           {[
             { level: "low", label: "😐 A Little" },
@@ -45,7 +47,7 @@ export default function ExposureQuestion({ exposureLevel, onSelect }: ExposureQu
               onClick={() => onSelect(level as "low" | "medium" | "high")}
               className={`
                 px-5 py-3 rounded-full text-sm sm:text-base font-semibold transition-all duration-200
-                border 
+                border
                 ${
                   exposureLevel === level
                     ? "border-[#FFBF00] bg-[#1F3B1D] text-[#FFBF00]"
@@ -58,7 +60,6 @@ export default function ExposureQuestion({ exposureLevel, onSelect }: ExposureQu
           ))}
         </div>
 
-        {/* Goblin note / micro lore flavor */}
         <p className="mt-10 text-xs sm:text-sm text-[#E3DAC9]/50 italic">
           “Honesty fuels our hunt. The more exposed you feel, the harder we strike.”
         </p>

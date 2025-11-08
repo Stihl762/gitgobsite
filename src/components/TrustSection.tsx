@@ -47,16 +47,14 @@ export default function TrustSection() {
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: 'easeOut' }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
         viewport={{ once: true }}
         className="max-w-5xl mx-auto text-center"
       >
-        {/* Urgency Banner */}
         <div className="inline-block mb-8 px-5 py-2 rounded-full bg-[#1F3B1D]/80 border border-[#FFBF00]/50 text-sm sm:text-base text-[#FFBF00] shadow-[0_0_15px_rgba(255,191,0,0.2)]">
           ⚠️ Limited Beta Pricing — Lock your rate before full launch.
         </div>
 
-        {/* Testimonials */}
         <div className="grid gap-6 md:grid-cols-3 mb-12">
           {testimonials.map((t, i) => (
             <motion.div
@@ -75,7 +73,6 @@ export default function TrustSection() {
           ))}
         </div>
 
-        {/* FAQ Section */}
         <div className="max-w-3xl mx-auto text-left">
           <h3 className="text-xl sm:text-2xl font-semibold text-[#E3DAC9] mb-6 text-center">
             Common Questions
@@ -100,10 +97,9 @@ export default function TrustSection() {
           ))}
         </div>
 
-        {/* Closing reassurance */}
         <div className="mt-16 max-w-2xl mx-auto text-[#E3DAC9]/60 text-sm sm:text-base italic">
-          “The shadows are watching, but so are we.  
-          Join the guild that guards your name and sleeps with one eye open.”
+          “The shadows are watching, but so are we. Join the guild that guards your
+          name and sleeps with one eye open.”
         </div>
       </motion.div>
     </section>

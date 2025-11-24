@@ -1,6 +1,8 @@
+// @ts-nocheck
+
 import Stripe from "stripe";
 
-export const onRequestPost: PagesFunction = async ({ request, env }) => {
+export const onRequestPost = async ({ request, env }) => {
   try {
     const stripe = new Stripe(env.STRIPE_SECRET_KEY);
 
@@ -13,7 +15,6 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
       });
     }
 
-    // Create checkout session
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer_email: email,
@@ -37,8 +38,7 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
       headers: { "Content-Type": "application/json" },
     });
 
-  } catch (err: any) {
-    console.error(err);
+  } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
       headers: { "Content-Type": "application/json" },

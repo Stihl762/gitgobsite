@@ -1,89 +1,78 @@
-import React, { useRef, useState } from "react";
+import React, { useRef } from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 import HeroSection from "../components/HeroSection";
-import ExposureQuestion from "../components/ExposureQuestion";
-import TiersSection from "../components/TiersSection";
 import SignupForm from "../components/SignupForm";
+import TiersSection from "../components/TiersSection"; // now used only for blurred display
 import TrustSection from "../components/TrustSection";
 
-// Central tier type so everything stays consistent
-export type TierId = "adventurer" | "hunter" | "tactician";
-
 export default function HomePage() {
-  const exposureRef = useRef<HTMLDivElement | null>(null);
-  const tiersRef = useRef<HTMLDivElement | null>(null);
   const formRef = useRef<HTMLDivElement | null>(null);
 
-  const [selectedTier, setSelectedTier] = useState<TierId>("hunter");
-  const [billingYearly, setBillingYearly] = useState(false);
-  const [exposureLevel, setExposureLevel] = useState<"low" | "medium" | "high" | null>(null);
-
-  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) => {
-    if (!ref.current) return;
-    ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  // When user answers "How exposed do you feel?"
-  const handleExposureSelect = (level: "low" | "medium" | "high") => {
-    setExposureLevel(level);
-
-    if (level === "low") setSelectedTier("adventurer");
-    if (level === "medium") setSelectedTier("hunter");
-    if (level === "high") setSelectedTier("tactician");
-
-    scrollTo(tiersRef);
-  };
-
-  // When user clicks a tier card
-  const handleTierSelect = (tier: TierId) => {
-    setSelectedTier(tier);
-    scrollTo(formRef);
+  // Smooth scroll to signup form
+  const scrollToSignup = () => {
+    if (!formRef.current) return;
+    formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
     <main className="min-h-screen bg-[#171710] text-[#E3DAC9]">
-      {/* Header stays at top; we’ll enhance it to use scroll callbacks */}
+
+      {/* HEADER */}
       <Header
-        // These props will be wired in Header.tsx (optional-safe)
-        onClickPlans={() => scrollTo(tiersRef)}
-        onClickStart={() => scrollTo(exposureRef)}
+        onClickPlans={scrollToSignup}
+        onClickStart={scrollToSignup}
       />
 
-      {/* HERO: hook + primary CTAs leading into funnel */}
+      {/* HERO — updated to jump straight into First Flame */}
       <HeroSection
-        // We’ll update HeroSection to accept these (optional-safe)
-        onStartProtection={() => scrollTo(exposureRef)}
-        onSeePlans={() => scrollTo(tiersRef)}
+        onStartProtection={scrollToSignup}
+        onSeePlans={scrollToSignup}
       />
 
-      {/* MICRO-COMMITMENT: "How exposed do you feel?" */}
-      <div ref={exposureRef}>
-        <ExposureQuestion
-          exposureLevel={exposureLevel}
-          onSelect={handleExposureSelect}
-        />
-      </div>
+      {/* BLURRED TIERS (coming soon) */}
+      <section className="relative mt-20 mb-10 px-6" id="tiers">
+        <div className="opacity-20 blur-sm pointer-events-none select-none">
+          <TiersSection
+            selectedTier="hunter"
+            billingYearly={false}
+            onToggleBilling={() => {}}
+            onSelectTier={() => {}}
+          />
+        </div>
 
-      {/* TIERS: Adventurer / Hunter (recommended) / Tactician */}
-      <div ref={tiersRef}>
-        <TiersSection
-          selectedTier={selectedTier}
-          billingYearly={billingYearly}
-          onToggleBilling={() => setBillingYearly((v) => !v)}
-          onSelectTier={handleTierSelect}
-        />
-      </div>
+        {/* Coming Soon Overlay */}
+        <div className="
+          absolute inset-0 flex flex-col items-center justify-center 
+          text-center space-y-4
+        ">
+          <h2 className="text-3xl sm:text-4xl font-bold text-[#FFBF00] drop-shadow-[0_0_10px_rgba(255,191,0,0.4)]">
+            Adventurer • Hunter • Tactician
+          </h2>
 
-      {/* SIGNUP: Inline form tuned to selected tier */}
+          <p className="text-sm sm:text-base text-[#E3DAC9]/80 max-w-md">
+            The full Goblin tiers unlock soon.  
+            For now, only the chosen may enter the fire.
+          </p>
+
+          <button
+            className="
+              mt-4 px-6 py-3 rounded-full bg-[#FFBF00] text-[#171710] font-semibold
+              hover:bg-[#E3DAC9] transition-all duration-200 shadow-[0_0_12px_rgba(255,191,0,0.25)]
+            "
+            onClick={scrollToSignup}
+          >
+            Join the First Flame
+          </button>
+        </div>
+      </section>
+
+      {/* SIGNUP FORM (First Flame Only) */}
       <div ref={formRef}>
-        <SignupForm
-          selectedTier={selectedTier}
-          billingYearly={billingYearly}
-        />
+        <SignupForm />
       </div>
 
-      {/* TRUST: urgency band, testimonials, FAQ */}
+      {/* TRUST / SOCIAL PROOF */}
       <TrustSection />
 
       <Footer />

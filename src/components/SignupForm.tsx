@@ -1,42 +1,12 @@
 "use client";
 import { useState, FormEvent } from "react";
-import { TierId } from "../pages"; // adjust import if needed
 
-interface SignupFormProps {
-  selectedTier: TierId;
-  billingYearly: boolean;
-}
-
-export default function SignupForm({ selectedTier, billingYearly }: SignupFormProps) {
+export default function SignupForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const tierInfo: Record<
-    TierId,
-    { name: string; summary: string; monthly: string; yearly: string }
-  > = {
-    adventurer: {
-      name: "Adventurer",
-      summary: "Foundational coverage for cautious explorers of the data wilds.",
-      monthly: "$15/mo",
-      yearly: "$150/yr",
-    },
-    hunter: {
-      name: "Hunter",
-      summary: "Balanced, aggressive, and most chosen by the goblin guild.",
-      monthly: "$35/mo",
-      yearly: "$350/yr",
-    },
-    tactician: {
-      name: "Tactician",
-      summary: "Elite, precision defense for strategists and high-risk defenders.",
-      monthly: "$75/mo",
-      yearly: "$750/yr",
-    },
-  };
-
-  const tier = tierInfo[selectedTier];
-  const displayPrice = billingYearly ? tier.yearly : tier.monthly;
+  const PLAN_NAME = "First Flame";
+  const PLAN_PRICE = "$55/mo";
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -54,15 +24,23 @@ export default function SignupForm({ selectedTier, billingYearly }: SignupFormPr
     }
 
     try {
-      // ⚙️ Placeholder: this is where Stripe or backend API will go.
-      // Example: redirect to Stripe Payment Link
-      // window.location.href = "https://buy.stripe.com/exampleLink";
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email }),
+      });
 
-      console.log("Submitting:", { name, email, selectedTier, billingYearly });
-      alert("Form submitted! (Next step: connect to Stripe or Cloudflare checkout.)");
+      const data = await res.json();
+
+      if (data.url) {
+        window.location.href = data.url;
+        return;
+      }
+
+      setError("Our goblins tripped on a wire — try again.");
     } catch (err) {
       console.error(err);
-      setError("Our goblins tripped on a wire — try again.");
+      setError("Something went wrong — try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -72,19 +50,21 @@ export default function SignupForm({ selectedTier, billingYearly }: SignupFormPr
     <section
       className="
         relative w-full py-20 px-6 sm:px-10
-        bg-[#171710] bg-[url('/guildgrain.png')]
-        bg-cover bg-blend-multiply
+        bg-[#171710] bg-[url('/guildgrain.png')] bg-cover bg-blend-multiply
         border-t border-[#1F3B1D]/60
       "
+      id="firstflame-signup"
     >
       <div className="max-w-md mx-auto text-center">
+        
         {/* Title */}
         <h2 className="text-3xl sm:text-4xl font-bold text-[#E3DAC9] mb-3">
-          Secure Your Protection
+          Join the First Flame
         </h2>
+
         <p className="text-sm sm:text-base text-[#E3DAC9]/75 mb-8">
-          You’ve chosen the <span className="text-[#FFBF00] font-semibold">{tier.name}</span> tier —{" "}
-          {tier.summary}
+          Early access protection for the first 100 who enter the fire.  
+          The march begins immediately.
         </p>
 
         {/* Form */}
@@ -93,8 +73,7 @@ export default function SignupForm({ selectedTier, billingYearly }: SignupFormPr
           className="bg-[#171710]/70 border border-[#1F3B1D] rounded-2xl p-6 text-left space-y-4"
         >
           <div className="text-[10px] sm:text-xs text-[#E3DAC9]/60 mb-2">
-            Plan: <span className="text-[#FFBF00]">{tier.name}</span> • {displayPrice} •{" "}
-            {billingYearly ? "Annual billing" : "Monthly billing"}
+            Plan: <span className="text-[#FFBF00]">{PLAN_NAME}</span> • {PLAN_PRICE} • Monthly auto-renew
           </div>
 
           <input
@@ -107,6 +86,7 @@ export default function SignupForm({ selectedTier, billingYearly }: SignupFormPr
               focus:outline-none focus:border-[#FFBF00]
             "
           />
+
           <input
             type="email"
             name="email"
@@ -146,8 +126,9 @@ export default function SignupForm({ selectedTier, billingYearly }: SignupFormPr
 
         {/* Emotional reassurance */}
         <p className="mt-8 text-xs sm:text-sm text-[#E3DAC9]/60 italic">
-          “Your goblins march within the hour. You chose wisely, {tier.name}.”
+          “The fire accepts you. The march begins soon.”
         </p>
+
       </div>
     </section>
   );

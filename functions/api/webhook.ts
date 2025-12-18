@@ -2,31 +2,27 @@
 // functions/api/webhook.ts
 // Cloudflare Pages Functions (Workers runtime)
 //
-// TARGET 1 ONLY:
+// TARGET 1 + TARGET 2:
 // ✅ Receive Stripe event
-// ✅ Verify signature with raw body
+// ✅ Verify signature with raw body (constructEventAsync + WebCrypto)
 // ✅ Log event.type + event.id
+// ✅ Classify core events (switchboard)
 // ✅ Return 200 quickly
 //
-// After Target 1 is proven stable, we will re-add tier assignment, aliasing, emails, etc.
+// Next targets (later): idempotency, tier authority, emails/alias actions.
 
 import Stripe from "stripe";
 
 export const onRequestPost: PagesFunction = async ({ request, env }) => {
-  // 1) Read required Stripe header
   const signature = request.headers.get("stripe-signature");
   if (!signature) {
     return new Response("Missing stripe-signature", { status: 400 });
   }
 
-  // 2) IMPORTANT: Use the RAW body string (do not JSON.parse before verifying)
+  // RAW body required for Stripe signature verification
   const body = await request.text();
 
-  // 3) Create Stripe client
-  // env.STRIPE_SECRET_KEY should be your TEST secret while testing
   const stripe = new Stripe(env.STRIPE_SECRET_KEY);
-
-  // 4) Cloudflare Workers/Pages verification uses async WebCrypto provider
   const cryptoProvider = Stripe.createSubtleCryptoProvider();
 
   let event: Stripe.Event;
@@ -44,16 +40,52 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
     return new Response("Webhook Error", { status: 400 });
   }
 
-  // 5) Target 1 success log lines
+  // --- Target 1 success logs ---
   console.log("✅ Stripe webhook verified");
   console.log("type:", event.type);
   console.log("id:", event.id);
-
-  // Optional: useful during testing to confirm livemode/testmode quickly
-  // (Stripe sends "livemode" on the event object)
   // @ts-ignore
   console.log("livemode:", event.livemode);
 
-  // 6) Return 2xx fast so Stripe stops retrying
+  // --- Target 2: Event classification (control) ---
+  switch (event.type) {
+    case "checkout.session.completed": {
+      console.log("✅ Payment succeeded (checkout.session.completed)");
+      // Minimal visibility for debugging:
+      const session = event.data.object as Stripe.Checkout.Session;
+      console.log("session.id:", session.id);
+      console.log("mode:", session.mode); // "payment" or "subscription"
+      console.log("customer:", session.customer);
+      console.log("customer_email:", session.customer_email);
+      console.log("payment_status:", session.payment_status);
+      break;
+    }
+
+    case "invoice.payment_failed": {
+      console.log("⚠️ Payment failed (invoice.payment_failed)");
+      const invoice = event.data.object as Stripe.Invoice;
+      console.log("invoice.id:", invoice.id);
+      console.log("customer:", invoice.customer);
+      console.log("subscription:", invoice.subscription);
+      break;
+    }
+
+    case "customer.subscription.deleted": {
+      console.log("🛑 Subscription cancelled (customer.subscription.deleted)");
+      const sub = event.data.object as Stripe.Subscription;
+      console.log("subscription.id:", sub.id);
+      console.log("customer:", sub.customer);
+      // @ts-ignore
+      console.log("status:", sub.status);
+      break;
+    }
+
+    default: {
+      console.log("ℹ️ Unhandled event type:", event.type);
+      break;
+    }
+  }
+
+  // Always return 2xx quickly so Stripe does not retry
   return new Response("ok", { status: 200 });
 };

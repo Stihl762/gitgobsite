@@ -32,7 +32,7 @@ const tierFromPriceId = (priceId: string | null | undefined) => {
 
   // TODO: Replace with your real Price IDs from Stripe
   const map: Record<string, string> = {
-    // "price_123": "firstflame",
+    "price_1SWowiLFse1XSqKrXgkJ5hNf": "firstflame",
     // "price_456": "hunter",
     // "price_789": "aegis",
   };

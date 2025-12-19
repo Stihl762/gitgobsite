@@ -1,19 +1,13 @@
 // @ts-nocheck
 // functions/api/webhook.ts
-// Cloudflare Pages Functions (Workers runtime)
-// Target 1 + Target 2: verify + classify
-
 import Stripe from "stripe";
 
 export const onRequestPost = async ({ request, env }: any) => {
   const signature = request.headers.get("stripe-signature");
-  if (!signature) {
-    return new Response("Missing stripe-signature", { status: 400 });
-  }
+  if (!signature) return new Response("Missing stripe-signature", { status: 400 });
 
-  const body = await request.text(); // raw body
+  const body = await request.text();
   const stripe = new Stripe(env.STRIPE_SECRET_KEY);
-
   const cryptoProvider = Stripe.createSubtleCryptoProvider();
 
   let event: Stripe.Event;
@@ -30,47 +24,43 @@ export const onRequestPost = async ({ request, env }: any) => {
     return new Response("Webhook Error", { status: 400 });
   }
 
-  console.log("✅ Stripe webhook verified");
-  console.log("type:", event.type);
-  console.log("id:", event.id);
-  // @ts-ignore
-  console.log("livemode:", event.livemode);
+  console.log("✅ verified:", event.type, event.id);
 
+  // --- Target 3: Idempotency lock ---
+  const lockKey = `stripe_event:${event.id}`;
+
+  // If KV isn't bound yet, fail loudly (so we don't think we're safe when we're not)
+  if (!env.STRIPE_EVENTS) {
+    console.error("❌ Missing KV binding: STRIPE_EVENTS");
+    return new Response("Server misconfigured", { status: 500 });
+  }
+
+  const already = await env.STRIPE_EVENTS.get(lockKey);
+  if (already) {
+    console.log("🧱 duplicate event, skipped:", event.id);
+    return new Response("ok", { status: 200 });
+  }
+
+  // Mark as processed (keep for 14 days to cover retries/disputes)
+  await env.STRIPE_EVENTS.put(lockKey, "1", { expirationTtl: 60 * 60 * 24 * 14 });
+
+  // --- Target 2 switchboard (still minimal) ---
   switch (event.type) {
-    case "checkout.session.completed": {
+    case "checkout.session.completed":
       console.log("✅ Payment succeeded (checkout.session.completed)");
-      const session = event.data.object as Stripe.Checkout.Session;
-      console.log("session.id:", session.id);
-      console.log("mode:", session.mode);
-      console.log("customer:", session.customer);
-      console.log("customer_email:", session.customer_email);
-      console.log("payment_status:", session.payment_status);
       break;
-    }
 
-    case "invoice.payment_failed": {
+    case "invoice.payment_failed":
       console.log("⚠️ Payment failed (invoice.payment_failed)");
-      const invoice = event.data.object as Stripe.Invoice;
-      console.log("invoice.id:", invoice.id);
-      console.log("customer:", invoice.customer);
-      console.log("subscription:", invoice.subscription);
       break;
-    }
 
-    case "customer.subscription.deleted": {
+    case "customer.subscription.deleted":
       console.log("🛑 Subscription cancelled (customer.subscription.deleted)");
-      const sub = event.data.object as Stripe.Subscription;
-      console.log("subscription.id:", sub.id);
-      console.log("customer:", sub.customer);
-      // @ts-ignore
-      console.log("status:", sub.status);
       break;
-    }
 
-    default: {
+    default:
       console.log("ℹ️ Unhandled event type:", event.type);
       break;
-    }
   }
 
   return new Response("ok", { status: 200 });

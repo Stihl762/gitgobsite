@@ -13,20 +13,18 @@ import Stripe from "stripe";
  *
  * Env vars for Stripe Price IDs (Cloudflare Secrets):
  * - STRIPE_PRICE_ID_FIRSTFLAME
- *   (add more later)
  *
- * Env vars to call Fly alias/email engine (Option A):
+ * Env vars to call Fly alias/email engine:
  * - GOBLINALIAS_URL            e.g. "https://goblinalias.fly.dev"
  * - GOBLINALIAS_API_KEY        (must match Fly ALIAS_API_KEY)
  * - GOBLINALIAS_CONTRACT       e.g. "v1" (must match Fly NG_CONTRACT)
  *
- * Optional:
- * - DEFAULT_INTAKE_URL         e.g. "https://netgoblin.org/intake"
+ * NEW (required for mint):
+ * - GOBLINALIAS_INTAKE_SECRET  (must match Fly INTAKE_TOKEN_SECRET)
  *
  * NOTE:
- * - This file DOES NOT use Resend.
- * - It restores the original styled Gmail onboarding email by calling Fly /generate-alias,
- *   which triggers sendEmail.js in your goblinalias app.
+ * - We call Fly /generate-alias to create alias (idempotent)
+ * - Then we call Fly /intake/mint to mint code + send email with ?code=...
  */
 
 type AccessState = "active" | "locked";
@@ -67,10 +65,6 @@ const tierFromPriceId = (priceId: string | null | undefined, env: any) => {
   const map: Record<string, string> = {};
 
   if (env?.STRIPE_PRICE_ID_FIRSTFLAME) map[env.STRIPE_PRICE_ID_FIRSTFLAME] = "firstflame";
-  // Add later:
-  // if (env?.STRIPE_PRICE_ID_HUNTER) map[env.STRIPE_PRICE_ID_HUNTER] = "hunter";
-  // if (env?.STRIPE_PRICE_ID_AEGIS) map[env.STRIPE_PRICE_ID_AEGIS] = "aegis";
-
   return map[priceId] || null;
 };
 
@@ -152,13 +146,18 @@ export const onRequestPost = async ({ request, env }: any) => {
     });
   };
 
-  // ---- Call Fly /generate-alias to send the styled Gmail intake email ----
-  const callFlyGenerateAlias = async (email: string) => {
+  // ---- Fly callers ----
+
+  const flyConfig = () => {
     const baseUrl = requireEnv(env, "GOBLINALIAS_URL").replace(/\/+$/, "");
     const apiKey = requireEnv(env, "GOBLINALIAS_API_KEY");
     const contract = env.GOBLINALIAS_CONTRACT || "v1";
+    return { baseUrl, apiKey, contract };
+  };
 
-    const intakeFormUrl = env.DEFAULT_INTAKE_URL || "https://netgoblin.org/intake";
+  // Create alias (idempotent by Stripe event id). Returns { success, alias }
+  const callFlyGenerateAlias = async (email: string) => {
+    const { baseUrl, apiKey, contract } = flyConfig();
 
     // Stripe retries happen; use a stable idempotency key.
     const idem = `stripe:${event.id}`;
@@ -173,7 +172,8 @@ export const onRequestPost = async ({ request, env }: any) => {
       },
       body: JSON.stringify({
         email,
-        intakeFormUrl,
+        // IMPORTANT: do NOT pass intakeFormUrl here.
+        // We want /intake/mint to generate https://netgoblin.org/intake?code=...
       }),
     });
 
@@ -182,7 +182,40 @@ export const onRequestPost = async ({ request, env }: any) => {
       throw new Error(`Fly /generate-alias failed (${resp.status}): ${text || "no body"}`);
     }
 
-    // Fly returns JSON { success: true, alias }
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { success: true, raw: text };
+    }
+  };
+
+  // Mint intake code + send email with ?code=... (requires x-intake-secret)
+  const callFlyIntakeMint = async (params: { customerId: string; email: string; alias: string }) => {
+    const { baseUrl, apiKey, contract } = flyConfig();
+    const intakeSecret = requireEnv(env, "GOBLINALIAS_INTAKE_SECRET");
+
+    const resp = await fetch(`${baseUrl}/intake/mint`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "x-ng-contract": contract,
+        "x-intake-secret": intakeSecret,
+        // Optional: If you later add idempotency on /intake/mint, you can pass:
+        // "Idempotency-Key": `stripe:${event.id}`,
+      },
+      body: JSON.stringify({
+        stripeCustomerId: params.customerId,
+        email: params.email,
+        alias: params.alias,
+      }),
+    });
+
+    const text = await resp.text().catch(() => "");
+    if (!resp.ok) {
+      throw new Error(`Fly /intake/mint failed (${resp.status}): ${text || "no body"}`);
+    }
+
     try {
       return JSON.parse(text);
     } catch {
@@ -200,7 +233,11 @@ export const onRequestPost = async ({ request, env }: any) => {
     const customerId = params.customerId ?? null;
 
     const welcomeKey =
-      customerId ? `welcome_sent:cust:${customerId}` : emailLower ? `welcome_sent:email:${emailLower}` : null;
+      customerId
+        ? `welcome_sent:cust:${customerId}`
+        : emailLower
+          ? `welcome_sent:email:${emailLower}`
+          : null;
 
     if (!welcomeKey) {
       console.log("📧 intake not sent: missing email/customerId");
@@ -208,6 +245,10 @@ export const onRequestPost = async ({ request, env }: any) => {
     }
     if (!params.email) {
       console.log("📧 intake not sent: missing email");
+      return;
+    }
+    if (!params.customerId) {
+      console.log("📧 intake not sent: missing customerId");
       return;
     }
     if (params.access !== "active") {
@@ -222,11 +263,28 @@ export const onRequestPost = async ({ request, env }: any) => {
     }
 
     try {
-      const res = await callFlyGenerateAlias(params.email);
+      // 1) Generate alias (idempotent)
+      const resAlias = await callFlyGenerateAlias(params.email);
+      const alias = resAlias?.alias;
+
+      if (!alias || typeof alias !== "string") {
+        throw new Error("Fly /generate-alias did not return alias");
+      }
+
+      // 2) Mint code + send email with ?code=...
+      const resMint = await callFlyIntakeMint({
+        customerId: params.customerId,
+        email: params.email,
+        alias,
+      });
 
       // Mark as sent ONLY after success
       await env.STRIPE_EVENTS.put(welcomeKey, "1", { expirationTtl: 60 * 60 * 24 * 365 });
-      console.log("📧 intake sent via Fly:", params.email, res?.alias ? { alias: res.alias } : {});
+
+      console.log("📧 intake sent via Fly (minted link):", params.email, {
+        alias,
+        intakeUrl: resMint?.intakeUrl ? "(ok)" : "(no intakeUrl returned)",
+      });
     } catch (err: any) {
       console.error("❌ intake via Fly failed:", err?.message || err);
       // Do NOT set welcomeKey so future events can retry
@@ -280,7 +338,7 @@ export const onRequestPost = async ({ request, env }: any) => {
         access,
       });
 
-      // ✅ restore stylized Gmail onboarding/intake email via Fly
+      // ✅ stylized Gmail onboarding + minted intake link via Fly
       await maybeSendIntakeViaFlyOnce({ email, customerId, access });
 
       break;

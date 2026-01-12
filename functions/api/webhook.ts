@@ -23,7 +23,7 @@ import Stripe from "stripe";
  * - GOBLINALIAS_INTAKE_SECRET  (must match Fly INTAKE_TOKEN_SECRET)
  *
  * NOTE:
- * - We call Fly /generate-alias to create alias (idempotent)
+ * - We call Fly /generate-alias to create alias + send welcome email (idempotent)
  * - Then we call Fly /intake/mint to mint code + send email with ?code=... (when possible)
  */
 
@@ -156,10 +156,10 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // Create alias (idempotent by Stripe event id). Returns { success, alias }
-  const callFlyGenerateAlias = async (email: string) => {
+  // FIX: Fly now requires stripeCustomerId in body.
+  const callFlyGenerateAlias = async (params: { email: string; customerId: string }) => {
     const { baseUrl, apiKey, contract } = flyConfig();
 
-    // Stripe retries happen; use a stable idempotency key.
     const idem = `stripe:${event.id}`;
 
     const resp = await fetch(`${baseUrl}/generate-alias`, {
@@ -171,9 +171,9 @@ export const onRequestPost = async ({ request, env }: any) => {
         "Idempotency-Key": idem,
       },
       body: JSON.stringify({
-        email,
+        email: params.email,
+        stripeCustomerId: params.customerId,
         // IMPORTANT: do NOT pass intakeFormUrl here.
-        // We want /intake/mint to generate https://netgoblin.org/intake?code=...
       }),
     });
 
@@ -192,8 +192,6 @@ export const onRequestPost = async ({ request, env }: any) => {
   // Mint intake code + send email with ?code=... (requires x-intake-secret)
   const callFlyIntakeMint = async (params: { customerId: string; email: string; alias: string }) => {
     const { baseUrl, apiKey, contract } = flyConfig();
-
-    // NOTE: do NOT hard-fail if missing. We'll gate before calling.
     const intakeSecret = env.GOBLINALIAS_INTAKE_SECRET;
 
     const resp = await fetch(`${baseUrl}/intake/mint`, {
@@ -202,7 +200,7 @@ export const onRequestPost = async ({ request, env }: any) => {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "x-ng-contract": contract,
-        "x-intake-secret": intakeSecret,
+        ...(intakeSecret ? { "x-intake-secret": intakeSecret } : {}),
       },
       body: JSON.stringify({
         stripeCustomerId: params.customerId,
@@ -224,9 +222,6 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // ---- Only send intake once per customer/email ----
-  // FIX: do NOT require customerId to send the welcome email.
-  // We always send via /generate-alias when access is active.
-  // Then we *optionally* mint the code link if customerId + intake secret exist.
   const maybeSendIntakeViaFlyOnce = async (params: {
     email: string | null;
     customerId: string | null;
@@ -261,19 +256,25 @@ export const onRequestPost = async ({ request, env }: any) => {
       return;
     }
 
+    // IMPORTANT: Fly /generate-alias requires customerId now.
+    if (!customerId) {
+      console.log("📧 intake not sent: missing customerId (Fly /generate-alias requires it now)");
+      return;
+    }
+
     try {
-      // 1) ALWAYS send welcome email via Fly (restores old behavior)
-      const resAlias = await callFlyGenerateAlias(params.email);
+      // 1) Send welcome email via Fly (idempotent)
+      const resAlias = await callFlyGenerateAlias({ email: params.email, customerId });
       const alias = resAlias?.alias;
 
       if (!alias || typeof alias !== "string") {
         throw new Error("Fly /generate-alias did not return alias");
       }
 
-      // 2) Optionally mint intake link (code) if we can
+      // 2) Optionally mint the coded link email (if intake secret exists in CF env)
       const hasIntakeSecret = Boolean(env.GOBLINALIAS_INTAKE_SECRET);
 
-      if (customerId && hasIntakeSecret) {
+      if (hasIntakeSecret) {
         const resMint = await callFlyIntakeMint({
           customerId,
           email: params.email,
@@ -285,14 +286,10 @@ export const onRequestPost = async ({ request, env }: any) => {
           intakeUrl: resMint?.intakeUrl ? "(ok)" : "(no intakeUrl returned)",
         });
       } else {
-        console.log("ℹ️ skipping /intake/mint:", {
-          hasCustomerId: Boolean(customerId),
-          hasIntakeSecret,
-          note: "welcome email still sent via /generate-alias",
-        });
+        console.log("ℹ️ skipping /intake/mint: missing env.GOBLINALIAS_INTAKE_SECRET (welcome still sent)");
       }
 
-      // Mark as sent after welcome email succeeded (and mint attempted if possible)
+      // Mark as sent after welcome succeeded (and mint attempted if possible)
       await env.STRIPE_EVENTS.put(welcomeKey, "1", { expirationTtl: 60 * 60 * 24 * 365 });
       console.log("📧 welcome sent via Fly:", params.email, { alias });
     } catch (err: any) {
@@ -319,13 +316,13 @@ export const onRequestPost = async ({ request, env }: any) => {
       const subscriptionId =
         (typeof session.subscription === "string" ? session.subscription : session.subscription?.id) ?? null;
 
-      // Best-effort recovery: sometimes Checkout doesn't attach a customer to the session.
+      // Best-effort recovery if session.customer is absent.
       if (!customerId && email) {
         try {
           const found = await stripe.customers.list({ email, limit: 1 });
           customerId = found?.data?.[0]?.id ?? null;
           if (customerId) console.log("✅ recovered customerId via email lookup:", customerId);
-        } catch (e: any) {
+        } catch {
           console.log("ℹ️ could not recover customerId via email lookup");
         }
       }
@@ -359,7 +356,6 @@ export const onRequestPost = async ({ request, env }: any) => {
         access,
       });
 
-      // ✅ welcome always (if active); mint link if possible
       await maybeSendIntakeViaFlyOnce({ email, customerId, access });
 
       break;

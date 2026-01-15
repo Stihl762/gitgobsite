@@ -173,6 +173,7 @@ export const onRequestPost = async ({ request, env }: any) => {
       body: JSON.stringify({
         email: params.email,
         stripeCustomerId: params.customerId,
+          skipEmail: true,
         // IMPORTANT: do NOT pass intakeFormUrl here.
       }),
     });

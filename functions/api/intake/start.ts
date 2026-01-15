@@ -1,52 +1,76 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+// functions/api/intake/start.ts
+// @ts-nocheck
 
-function safeJsonParse(text: string) {
-  if (!text || !text.trim()) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
+export const onRequest = async (ctx: any) => {
+  const request = ctx.request;
+  const env = ctx.env;
+
+  if (request.method === "OPTIONS") return new Response(null, { status: 204 });
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ status: "ERROR", details: "Method not allowed" }), {
+      status: 405,
+      headers: { "content-type": "application/json" },
+    });
   }
-}
-
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") return res.status(405).json({ status: "ERROR", details: "Method not allowed" });
 
   try {
-    const { code } = req.body || {};
+    const body = await request.json().catch(() => ({} as any));
+    const code = body?.code;
+
     if (!code || typeof code !== "string") {
-      return res.status(400).json({ status: "ERROR", details: "Missing/invalid code" });
+      return new Response(JSON.stringify({ status: "ERROR", details: "Missing/invalid code" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    const base = process.env.GOBLINALIAS_URL;
-    const intakeSecret = process.env.GOBLINALIAS_INTAKE_SECRET;
+    const base = env?.GOBLINALIAS_URL;
+    const intakeSecret = env?.GOBLINALIAS_INTAKE_SECRET;
 
-    if (!base) return res.status(500).json({ status: "ERROR", details: "Missing env: GOBLINALIAS_URL" });
-    if (!intakeSecret) return res.status(500).json({ status: "ERROR", details: "Missing env: GOBLINALIAS_INTAKE_SECRET" });
+    if (!base) {
+      return new Response(JSON.stringify({ status: "ERROR", details: "Missing env: GOBLINALIAS_URL" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (!intakeSecret) {
+      return new Response(JSON.stringify({ status: "ERROR", details: "Missing env: GOBLINALIAS_INTAKE_SECRET" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
 
-    const upstream = await fetch(`${base.replace(/\/+$/, "")}/intake/start`, {
+    const upstream = await fetch(`${String(base).replace(/\/+$/, "")}/intake/start`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-intake-secret": intakeSecret,
+        "x-intake-secret": String(intakeSecret),
       },
       body: JSON.stringify({ code }),
     });
 
     const text = await upstream.text().catch(() => "");
-    const parsed = safeJsonParse(text);
+    let parsed: any = null;
+    try {
+      parsed = text && text.trim() ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
 
-    // Always return JSON to the browser.
-    if (parsed) return res.status(upstream.status).json(parsed);
+    const payload =
+      parsed ?? {
+        status: "ERROR",
+        details: text?.slice(0, 500) || `Upstream returned empty/non-JSON body (HTTP ${upstream.status})`,
+      };
 
-    return res.status(upstream.status).json({
-      status: "ERROR",
-      details: text?.slice(0, 500) || `Upstream returned non-JSON/empty body (HTTP ${upstream.status})`,
+    return new Response(JSON.stringify(payload), {
+      status: upstream.status,
+      headers: { "content-type": "application/json" },
     });
   } catch (err: any) {
-    return res.status(500).json({
-      status: "ERROR",
-      details: err?.message || "Server error",
+    return new Response(JSON.stringify({ status: "ERROR", details: err?.message || "Server error" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
     });
   }
-}
+};

@@ -5,7 +5,16 @@ type StartResp =
   | { status: "PENDING"; requestId: string }
   | { status: "SUBMITTED"; requestId: string }
   | { status: "INVALID"; requestId: string }
-  | { status: "ERROR"; requestId: string; details?: string };
+  | { status: "ERROR"; requestId?: string; details?: string };
+
+function safeJsonParse(text: string) {
+  if (!text || !text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 export default function IntakePage() {
   const router = useRouter();
@@ -17,7 +26,7 @@ export default function IntakePage() {
 
   const [msg, setMsg] = useState("");
 
-  // Basic v1 intake fields
+  // Basic v1 intake fields (expand later)
   const [fullName, setFullName] = useState("");
   const [dob, setDob] = useState("");
   const [phone, setPhone] = useState("");
@@ -27,6 +36,9 @@ export default function IntakePage() {
     if (!code) return;
 
     const check = async () => {
+      setState("loading");
+      setMsg("");
+
       try {
         const res = await fetch("/api/intake/start", {
           method: "POST",
@@ -34,7 +46,18 @@ export default function IntakePage() {
           body: JSON.stringify({ code }),
         });
 
-        const data: StartResp = await res.json();
+        const text = await res.text().catch(() => "");
+        const data = safeJsonParse(text) as StartResp | null;
+
+        // If API returned empty/non-JSON, show raw diagnostics
+        if (!data) {
+          setState("error");
+          setMsg(
+            `API returned non-JSON/empty body. HTTP ${res.status}. ` +
+              (text ? `Body: ${text.slice(0, 300)}` : "Body was empty.")
+          );
+          return;
+        }
 
         if (data.status === "PENDING") return setState("pending");
         if (data.status === "SUBMITTED") return setState("submitted");
@@ -45,7 +68,7 @@ export default function IntakePage() {
         }
 
         setState("error");
-        setMsg(data.details || "Server error.");
+        setMsg(data.details || `Server error. HTTP ${res.status}`);
       } catch (err: any) {
         setState("error");
         setMsg(err?.message || "Network error.");
@@ -57,22 +80,27 @@ export default function IntakePage() {
 
   const submit = async () => {
     setMsg("");
+
     try {
       const res = await fetch("/api/intake/submit", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           code,
-          payload: {
-            fullName,
-            dob,
-            phone,
-            address,
-          },
+          payload: { fullName, dob, phone, address },
         }),
       });
 
-      const data = await res.json();
+      const text = await res.text().catch(() => "");
+      const data = safeJsonParse(text) as any;
+
+      if (!data) {
+        setMsg(
+          `Submit returned non-JSON/empty body. HTTP ${res.status}. ` +
+            (text ? `Body: ${text.slice(0, 300)}` : "Body was empty.")
+        );
+        return;
+      }
 
       if (data.status === "SUBMITTED" || data.status === "ALREADY_SUBMITTED") {
         setState("submitted");
@@ -101,7 +129,7 @@ export default function IntakePage() {
       {state === "error" && (
         <>
           <p><b>Error</b></p>
-          <p>{msg}</p>
+          <p style={{ whiteSpace: "pre-wrap" }}>{msg}</p>
         </>
       )}
 
@@ -116,35 +144,48 @@ export default function IntakePage() {
         <>
           <p><b>Secure link verified.</b> Please complete this once.</p>
 
-          <label>
+          <label style={{ display: "block", marginTop: 12 }}>
             Full legal name
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              style={{ display: "block", width: "100%", padding: 10, marginTop: 6 }}
+            />
           </label>
 
-          <label>
+          <label style={{ display: "block", marginTop: 12 }}>
             Date of birth
             <input
               placeholder="YYYY-MM-DD"
               value={dob}
               onChange={(e) => setDob(e.target.value)}
+              style={{ display: "block", width: "100%", padding: 10, marginTop: 6 }}
             />
           </label>
 
-          <label>
+          <label style={{ display: "block", marginTop: 12 }}>
             Phone
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              style={{ display: "block", width: "100%", padding: 10, marginTop: 6 }}
+            />
           </label>
 
-          <label>
+          <label style={{ display: "block", marginTop: 12 }}>
             Address
-            <input value={address} onChange={(e) => setAddress(e.target.value)} />
+            <input
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              style={{ display: "block", width: "100%", padding: 10, marginTop: 6 }}
+            />
           </label>
 
-          <button onClick={submit} style={{ marginTop: 12 }}>
+          <button onClick={submit} style={{ marginTop: 16, padding: "10px 16px" }}>
             Submit Intake
           </button>
 
-          {msg && <p>{msg}</p>}
+          {msg && <p style={{ marginTop: 12, whiteSpace: "pre-wrap" }}>{msg}</p>}
         </>
       )}
     </main>

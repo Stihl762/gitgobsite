@@ -40,7 +40,7 @@ export const onRequest = async (ctx: any) => {
       });
     }
 
-    const upstream = await fetch(`${String(base).replace(/\/+$/, "")}/intake/start`, {
+    const upstream = await fetch(`${String(base).replace(/\/+$/, "")}/api/start`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

@@ -4,27 +4,23 @@ import Stripe from "stripe";
 
 /**
  * KV bindings required (Cloudflare):
- * - STRIPE_EVENTS     (idempotency + welcome-sent markers)
- * - STRIPE_CUSTOMERS  (customer/tier/access records)
+ * - STRIPE_EVENTS
+ * - STRIPE_CUSTOMERS
  *
  * Env vars required (Cloudflare):
  * - STRIPE_SECRET_KEY
  * - STRIPE_WEBHOOK_SECRET
  *
- * Env vars for Stripe Price IDs (Cloudflare Secrets):
+ * Env vars for Stripe Price IDs:
  * - STRIPE_PRICE_ID_FIRSTFLAME
  *
- * Env vars to call Fly alias/email engine:
- * - GOBLINALIAS_URL            e.g. "https://goblinalias.fly.dev"
- * - GOBLINALIAS_API_KEY        (must match Fly ALIAS_API_KEY)
- * - GOBLINALIAS_CONTRACT       e.g. "v1" (must match Fly NG_CONTRACT)
+ * Env vars to call Fly:
+ * - GOBLINALIAS_URL
+ * - GOBLINALIAS_API_KEY
+ * - GOBLINALIAS_CONTRACT (default "v1")
  *
- * REQUIRED for minted intake flow:
- * - GOBLINALIAS_INTAKE_SECRET  (must match Fly INTAKE_TOKEN_SECRET)
- *
- * Behavior:
- * - We call Fly /generate-alias to create alias ONLY (skipEmail=true, idempotent).
- * - Then we call Fly /intake/mint to mint code + send the ONE email with ?code=...
+ * Optional (enables /intake/mint):
+ * - GOBLINALIAS_INTAKE_SECRET (must match Fly INTAKE_TOKEN_SECRET)
  */
 
 type AccessState = "active" | "locked";
@@ -37,14 +33,12 @@ type CustomerRecord = {
   priceId: string | null;
   tier: string | null;
   access: AccessState;
-  updatedAt: string; // ISO
+  updatedAt: string;
   lastEventId: string;
   lastEventType: string;
 };
 
-const isActiveStatus = (status: string | null | undefined) => {
-  return status === "active" || status === "trialing";
-};
+const isActiveStatus = (status: string | null | undefined) => status === "active" || status === "trialing";
 
 const kvKeyForCustomer = (customerId: string | null, email: string | null) => {
   if (customerId) return `cust:${customerId}`;
@@ -138,11 +132,7 @@ export const onRequestPost = async ({ request, env }: any) => {
     };
 
     await env.STRIPE_CUSTOMERS.put(key, JSON.stringify(next));
-    console.log("🧾 stored record:", key, {
-      access: next.access,
-      tier: next.tier,
-      status: next.subscriptionStatus,
-    });
+    console.log("🧾 stored record:", key, { access: next.access, tier: next.tier, status: next.subscriptionStatus });
   };
 
   // ---- Fly callers ----
@@ -151,16 +141,12 @@ export const onRequestPost = async ({ request, env }: any) => {
     const baseUrl = requireEnv(env, "GOBLINALIAS_URL").replace(/\/+$/, "");
     const apiKey = requireEnv(env, "GOBLINALIAS_API_KEY");
     const contract = env.GOBLINALIAS_CONTRACT || "v1";
-
-    // REQUIRED for minted flow
-    const intakeSecret = requireEnv(env, "GOBLINALIAS_INTAKE_SECRET");
-
+    const intakeSecret = env.GOBLINALIAS_INTAKE_SECRET || null;
     return { baseUrl, apiKey, contract, intakeSecret };
   };
 
-  // Create alias ONLY (idempotent). Returns { success, alias }
-  // IMPORTANT: skipEmail=true so this endpoint never sends email.
-  const callFlyGenerateAlias = async (params: { email: string; customerId: string }) => {
+  // Create alias (idempotent by Stripe event id). Returns JSON { success, alias, ... }
+  const callFlyGenerateAlias = async (params: { email: string; customerId: string; skipEmail: boolean }) => {
     const { baseUrl, apiKey, contract } = flyConfig();
     const idem = `stripe:${event.id}`;
 
@@ -174,26 +160,25 @@ export const onRequestPost = async ({ request, env }: any) => {
       },
       body: JSON.stringify({
         email: params.email,
-        stripeCustomerId: params.customerId,
-        skipEmail: true,
+        stripeCustomerId: params.customerId, // ✅ REQUIRED by Fly now
+        skipEmail: params.skipEmail,
       }),
     });
 
     const text = await resp.text().catch(() => "");
-    if (!resp.ok) {
-      throw new Error(`Fly /generate-alias failed (${resp.status}): ${text || "no body"}`);
-    }
+    if (!resp.ok) throw new Error(`Fly /generate-alias failed (${resp.status}): ${text || "no body"}`);
 
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(`Fly /generate-alias returned non-JSON. Body="${text?.slice(0, 200) || ""}"`);
+      throw new Error(`Fly /generate-alias returned non-JSON. Body="${(text || "").slice(0, 200)}"`);
     }
   };
 
-  // Mint intake code + send email with ?code=... (requires x-intake-secret)
+  // Mint intake code + send email with ?code=... (requires x-intake-secret on Fly)
   const callFlyIntakeMint = async (params: { customerId: string; email: string; alias: string }) => {
     const { baseUrl, apiKey, contract, intakeSecret } = flyConfig();
+    if (!intakeSecret) throw new Error("Missing env var: GOBLINALIAS_INTAKE_SECRET");
 
     const resp = await fetch(`${baseUrl}/intake/mint`, {
       method: "POST",
@@ -211,49 +196,27 @@ export const onRequestPost = async ({ request, env }: any) => {
     });
 
     const text = await resp.text().catch(() => "");
-    if (!resp.ok) {
-      throw new Error(`Fly /intake/mint failed (${resp.status}): ${text || "no body"}`);
-    }
+    if (!resp.ok) throw new Error(`Fly /intake/mint failed (${resp.status}): ${text || "no body"}`);
 
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(`Fly /intake/mint returned non-JSON. Body="${text?.slice(0, 200) || ""}"`);
+      throw new Error(`Fly /intake/mint returned non-JSON. Body="${(text || "").slice(0, 200)}"`);
     }
   };
 
   // ---- Only send intake once per customer/email ----
-  const maybeSendIntakeViaFlyOnce = async (params: {
-    email: string | null;
-    customerId: string | null;
-    access: AccessState;
-  }) => {
+  const maybeSendIntakeViaFlyOnce = async (params: { email: string | null; customerId: string | null; access: AccessState }) => {
     const emailLower = safeLower(params.email);
     const customerId = params.customerId ?? null;
 
     const welcomeKey =
-      customerId
-        ? `welcome_sent:cust:${customerId}`
-        : emailLower
-        ? `welcome_sent:email:${emailLower}`
-        : null;
+      customerId ? `welcome_sent:cust:${customerId}` : emailLower ? `welcome_sent:email:${emailLower}` : null;
 
-    if (!welcomeKey) {
-      console.log("📧 intake not sent: missing email/customerId");
-      return;
-    }
-    if (!params.email) {
-      console.log("📧 intake not sent: missing email");
-      return;
-    }
-    if (!customerId) {
-      console.log("📧 intake not sent: missing customerId (required for Fly mint flow)");
-      return;
-    }
-    if (params.access !== "active") {
-      console.log("📧 intake not sent: access not active", { access: params.access });
-      return;
-    }
+    if (!welcomeKey) return console.log("📧 intake not sent: missing email/customerId");
+    if (!params.email) return console.log("📧 intake not sent: missing email");
+    if (!customerId) return console.log("📧 intake not sent: missing customerId");
+    if (params.access !== "active") return console.log("📧 intake not sent: access not active", { access: params.access });
 
     const alreadyWelcomed = await env.STRIPE_EVENTS.get(welcomeKey);
     if (alreadyWelcomed) {
@@ -262,28 +225,30 @@ export const onRequestPost = async ({ request, env }: any) => {
     }
 
     try {
-      // 1) Create alias only (no email)
-      const resAlias = await callFlyGenerateAlias({ email: params.email, customerId });
-      const alias = resAlias?.alias;
+      const { intakeSecret } = flyConfig();
 
-      if (!alias || typeof alias !== "string") {
-        throw new Error("Fly /generate-alias did not return alias");
+      // If we have intakeSecret: do 2-step (prevents duplicate emails)
+      if (intakeSecret) {
+        const resAlias = await callFlyGenerateAlias({ email: params.email, customerId, skipEmail: true });
+        const alias = resAlias?.alias;
+        if (!alias || typeof alias !== "string") throw new Error("Fly /generate-alias did not return alias");
+
+        const resMint = await callFlyIntakeMint({ customerId, email: params.email, alias });
+
+        await env.STRIPE_EVENTS.put(welcomeKey, "1", { expirationTtl: 60 * 60 * 24 * 365 });
+        console.log("📧 intake sent via Fly (/intake/mint):", params.email, {
+          alias,
+          intakeUrl: resMint?.intakeUrl ? "(ok)" : "(no intakeUrl returned)",
+        });
+        return;
       }
 
-      // 2) Mint coded intake link + send the ONE email
-      const resMint = await callFlyIntakeMint({
-        customerId,
-        email: params.email,
-        alias,
-      });
+      // Fallback: no intakeSecret => let /generate-alias send the email itself
+      const resAlias = await callFlyGenerateAlias({ email: params.email, customerId, skipEmail: false });
+      const alias = resAlias?.alias;
 
-      // Mark as sent ONLY after mint succeeded (ensures exactly-once semantics)
       await env.STRIPE_EVENTS.put(welcomeKey, "1", { expirationTtl: 60 * 60 * 24 * 365 });
-
-      console.log("📧 intake sent via Fly (minted link):", params.email, {
-        alias,
-        intakeUrl: resMint?.intakeUrl ? "(ok)" : "(no intakeUrl returned)",
-      });
+      console.log("📧 intake sent via Fly (/generate-alias fallback):", params.email, alias ? { alias } : {});
     } catch (err: any) {
       console.error("❌ intake via Fly failed:", err?.message || err);
       // Do NOT set welcomeKey so future events can retry
@@ -297,17 +262,14 @@ export const onRequestPost = async ({ request, env }: any) => {
 
       const session = event.data.object as Stripe.Checkout.Session;
 
-      let customerId =
-        (typeof session.customer === "string" ? session.customer : session.customer?.id) ?? null;
+      let customerId = (typeof session.customer === "string" ? session.customer : session.customer?.id) ?? null;
 
       const email = session.customer_email ?? session.customer_details?.email ?? null;
 
       const subscriptionId =
-        (typeof session.subscription === "string"
-          ? session.subscription
-          : session.subscription?.id) ?? null;
+        (typeof session.subscription === "string" ? session.subscription : session.subscription?.id) ?? null;
 
-      // Best-effort recovery if session.customer is absent.
+      // Best-effort recovery if customerId absent.
       if (!customerId && email) {
         try {
           const found = await stripe.customers.list({ email, limit: 1 });
@@ -323,10 +285,7 @@ export const onRequestPost = async ({ request, env }: any) => {
 
       try {
         if (subscriptionId) {
-          const sub = await stripe.subscriptions.retrieve(subscriptionId, {
-            expand: ["items.data.price"],
-          });
-
+          const sub = await stripe.subscriptions.retrieve(subscriptionId, { expand: ["items.data.price"] });
           subscriptionStatus = sub.status ?? null;
           priceId = sub.items?.data?.[0]?.price?.id ?? null;
         }
@@ -337,17 +296,9 @@ export const onRequestPost = async ({ request, env }: any) => {
       const tier = tierFromPriceId(priceId, env);
       const access: AccessState = isActiveStatus(subscriptionStatus) ? "active" : "locked";
 
-      await upsertCustomerRecord({
-        email,
-        customerId,
-        subscriptionId,
-        subscriptionStatus,
-        priceId,
-        tier,
-        access,
-      });
-
+      await upsertCustomerRecord({ email, customerId, subscriptionId, subscriptionStatus, priceId, tier, access });
       await maybeSendIntakeViaFlyOnce({ email, customerId, access });
+
       break;
     }
 
@@ -355,8 +306,8 @@ export const onRequestPost = async ({ request, env }: any) => {
       console.log("🔁 customer.subscription.updated");
 
       const sub = event.data.object as Stripe.Subscription;
-
       const customerId = (typeof sub.customer === "string" ? sub.customer : sub.customer?.id) ?? null;
+
       const subscriptionId = sub.id ?? null;
       const subscriptionStatus = sub.status ?? null;
       const priceId = sub.items?.data?.[0]?.price?.id ?? null;
@@ -364,15 +315,7 @@ export const onRequestPost = async ({ request, env }: any) => {
       const tier = tierFromPriceId(priceId, env);
       const access: AccessState = isActiveStatus(subscriptionStatus) ? "active" : "locked";
 
-      await upsertCustomerRecord({
-        customerId,
-        subscriptionId,
-        subscriptionStatus,
-        priceId,
-        tier,
-        access,
-      });
-
+      await upsertCustomerRecord({ customerId, subscriptionId, subscriptionStatus, priceId, tier, access });
       break;
     }
 
@@ -381,15 +324,11 @@ export const onRequestPost = async ({ request, env }: any) => {
 
       const invoice = event.data.object as Stripe.Invoice;
       const customerId = (typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id) ?? null;
+
       const subscriptionId =
         (typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id) ?? null;
 
-      await upsertCustomerRecord({
-        customerId,
-        subscriptionId,
-        access: "locked",
-      });
-
+      await upsertCustomerRecord({ customerId, subscriptionId, access: "locked" });
       break;
     }
 
@@ -405,7 +344,6 @@ export const onRequestPost = async ({ request, env }: any) => {
         subscriptionStatus: sub.status ?? "canceled",
         access: "locked",
       });
-
       break;
     }
 

@@ -20,6 +20,23 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+type PersonPayload = {
+  fullName: string;
+  dob: string;
+  phone: string;
+  address: string;
+};
+
+function isOptionalPersonProvided(p: PersonPayload) {
+  // If ANY field is filled, treat Person 2 as provided.
+  return (
+    p.fullName.trim() ||
+    p.dob.trim() ||
+    p.phone.trim() ||
+    p.address.trim()
+  );
+}
+
 export default function IntakePage() {
   const router = useRouter();
   const code = typeof router.query.code === "string" ? router.query.code : "";
@@ -30,16 +47,35 @@ export default function IntakePage() {
 
   const [msg, setMsg] = useState("");
 
-  // v1 intake fields
-  const [fullName, setFullName] = useState("");
-  const [dob, setDob] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
+  // Person 1 (required)
+  const [p1FullName, setP1FullName] = useState("");
+  const [p1Dob, setP1Dob] = useState("");
+  const [p1Phone, setP1Phone] = useState("");
+  const [p1Address, setP1Address] = useState("");
 
-  const canSubmit = useMemo(() => {
+  // Person 2 (optional)
+  const [p2FullName, setP2FullName] = useState("");
+  const [p2Dob, setP2Dob] = useState("");
+  const [p2Phone, setP2Phone] = useState("");
+  const [p2Address, setP2Address] = useState("");
+
+  const person1Ok = useMemo(() => {
     // keep it lenient; you can tighten later
-    return fullName.trim() && dob.trim() && phone.trim() && address.trim();
-  }, [fullName, dob, phone, address]);
+    return (
+      p1FullName.trim() && p1Dob.trim() && p1Phone.trim() && p1Address.trim()
+    );
+  }, [p1FullName, p1Dob, p1Phone, p1Address]);
+
+  const person2Provided = useMemo(() => {
+    return isOptionalPersonProvided({
+      fullName: p2FullName,
+      dob: p2Dob,
+      phone: p2Phone,
+      address: p2Address,
+    });
+  }, [p2FullName, p2Dob, p2Phone, p2Address]);
+
+  const canSubmit = person1Ok; // Person 2 never blocks submit
 
   useEffect(() => {
     if (!code) return;
@@ -89,14 +125,30 @@ export default function IntakePage() {
   const submit = async () => {
     setMsg("");
 
+    const person1: PersonPayload = {
+      fullName: p1FullName,
+      dob: p1Dob,
+      phone: p1Phone,
+      address: p1Address,
+    };
+
+    const person2: PersonPayload = {
+      fullName: p2FullName,
+      dob: p2Dob,
+      phone: p2Phone,
+      address: p2Address,
+    };
+
+    const payload = {
+      person1,
+      ...(person2Provided ? { person2 } : {}),
+    };
+
     try {
       const res = await fetch("/api/intake/submit", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          code,
-          payload: { fullName, dob, phone, address },
-        }),
+        body: JSON.stringify({ code, payload }),
       });
 
       const text = await res.text().catch(() => "");
@@ -220,36 +272,71 @@ export default function IntakePage() {
             )}
 
             {state === "pending" && (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 <p className="text-sm text-[#E3DAC9]/80">
                   Enter your information exactly as it appears on your legal
                   documents. This helps us match and remove broker records.
                 </p>
 
-                <Field
-                  label="Full legal name"
-                  value={fullName}
-                  onChange={setFullName}
-                  placeholder="First Middle Last"
-                />
-                <Field
-                  label="Date of birth"
-                  value={dob}
-                  onChange={setDob}
-                  placeholder="YYYY-MM-DD"
-                />
-                <Field
-                  label="Phone"
-                  value={phone}
-                  onChange={setPhone}
-                  placeholder="(555) 555-5555"
-                />
-                <Field
-                  label="Address"
-                  value={address}
-                  onChange={setAddress}
-                  placeholder="Street, City, State ZIP"
-                />
+                {/* Person 1 */}
+                <Section title="Person 1">
+                  <Field
+                    label="Full legal name"
+                    value={p1FullName}
+                    onChange={setP1FullName}
+                    placeholder="First Middle Last"
+                  />
+                  <Field
+                    label="Date of birth"
+                    value={p1Dob}
+                    onChange={setP1Dob}
+                    placeholder="MM-DD-YYYY"
+                  />
+                  <Field
+                    label="Phone"
+                    value={p1Phone}
+                    onChange={setP1Phone}
+                    placeholder="(555) 555-5555"
+                  />
+                  <Field
+                    label="Address"
+                    value={p1Address}
+                    onChange={setP1Address}
+                    placeholder="Street, City, State ZIP"
+                  />
+                </Section>
+
+                {/* Person 2 (Optional) */}
+                <Section
+                  title="Person 2"
+                  subtitle="(Optional) — leave blank if you only want one person covered."
+                  muted
+                >
+                  <Field
+                    label="Full legal name (optional)"
+                    value={p2FullName}
+                    onChange={setP2FullName}
+                    placeholder="First Middle Last (optional)"
+                  />
+                  <Field
+                    label="Date of birth (optional)"
+                    value={p2Dob}
+                    onChange={setP2Dob}
+                    placeholder="MM-DD-YYYY (optional)"
+                  />
+                  <Field
+                    label="Phone (optional)"
+                    value={p2Phone}
+                    onChange={setP2Phone}
+                    placeholder="(555) 555-5555 (optional)"
+                  />
+                  <Field
+                    label="Address (optional)"
+                    value={p2Address}
+                    onChange={setP2Address}
+                    placeholder="Street, City, State ZIP (optional)"
+                  />
+                </Section>
 
                 <div className="pt-2 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                   <button
@@ -288,6 +375,37 @@ export default function IntakePage() {
         </p>
       </div>
     </main>
+  );
+}
+
+function Section({
+  title,
+  subtitle,
+  muted,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  muted?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cx(
+        "rounded-2xl border px-5 sm:px-6 py-5",
+        muted
+          ? "border-[#1F3B1D]/45 bg-[#171710]/20"
+          : "border-[#1F3B1D]/60 bg-[#171710]/10"
+      )}
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-sm font-semibold text-[#E3DAC9]">{title}</div>
+        {subtitle && (
+          <div className="text-xs text-[#E3DAC9]/60 text-right">{subtitle}</div>
+        )}
+      </div>
+      <div className="mt-4 space-y-5">{children}</div>
+    </div>
   );
 }
 

@@ -11,7 +11,7 @@ import Stripe from "stripe";
  * - STRIPE_SECRET_KEY
  * - STRIPE_WEBHOOK_SECRET
  *
- * Env vars for Stripe Price IDs:
+ * Env vars for Stripe Price IDs (optional mapping to tiers):
  * - STRIPE_PRICE_ID_FIRSTFLAME
  *
  * Env vars to call Fly:
@@ -21,6 +21,9 @@ import Stripe from "stripe";
  *
  * Optional (enables /intake/mint):
  * - GOBLINALIAS_INTAKE_SECRET (must match Fly INTAKE_TOKEN_SECRET)
+ *
+ * NEW (recommended): enable Neon transaction persistence via Fly:
+ * - (no extra env needed) uses Fly /orders/upsert with same api key + contract
  */
 
 type AccessState = "active" | "locked";
@@ -38,7 +41,8 @@ type CustomerRecord = {
   lastEventType: string;
 };
 
-const isActiveStatus = (status: string | null | undefined) => status === "active" || status === "trialing";
+const isActiveStatus = (status: string | null | undefined) =>
+  status === "active" || status === "trialing";
 
 const kvKeyForCustomer = (customerId: string | null, email: string | null) => {
   if (customerId) return `cust:${customerId}`;
@@ -59,6 +63,15 @@ const tierFromPriceId = (priceId: string | null | undefined, env: any) => {
   const map: Record<string, string> = {};
   if (env?.STRIPE_PRICE_ID_FIRSTFLAME) map[env.STRIPE_PRICE_ID_FIRSTFLAME] = "firstflame";
   return map[priceId] || null;
+};
+
+const safeJsonParse = (s: string | null) => {
+  if (!s) return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 };
 
 export const onRequestPost = async ({ request, env }: any) => {
@@ -97,6 +110,7 @@ export const onRequestPost = async ({ request, env }: any) => {
   }
 
   // ---- Idempotency per Stripe event ----
+  // This is the *first* line of defense (fast). Fly also has DB idempotency via stripe_events.
   const lockKey = `stripe_event:${event.id}`;
   const already = await env.STRIPE_EVENTS.get(lockKey);
   if (already) {
@@ -132,7 +146,11 @@ export const onRequestPost = async ({ request, env }: any) => {
     };
 
     await env.STRIPE_CUSTOMERS.put(key, JSON.stringify(next));
-    console.log("🧾 stored record:", key, { access: next.access, tier: next.tier, status: next.subscriptionStatus });
+    console.log("🧾 stored record:", key, {
+      access: next.access,
+      tier: next.tier,
+      status: next.subscriptionStatus,
+    });
   };
 
   // ---- Fly callers ----
@@ -146,7 +164,11 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // Create alias (idempotent by Stripe event id). Returns JSON { success, alias, ... }
-  const callFlyGenerateAlias = async (params: { email: string; customerId: string; skipEmail: boolean }) => {
+  const callFlyGenerateAlias = async (params: {
+    email: string;
+    customerId: string;
+    skipEmail: boolean;
+  }) => {
     const { baseUrl, apiKey, contract } = flyConfig();
     const idem = `stripe:${event.id}`;
 
@@ -160,7 +182,7 @@ export const onRequestPost = async ({ request, env }: any) => {
       },
       body: JSON.stringify({
         email: params.email,
-        stripeCustomerId: params.customerId, // ✅ REQUIRED by Fly now
+        stripeCustomerId: params.customerId, // ✅ REQUIRED by Fly
         skipEmail: params.skipEmail,
       }),
     });
@@ -176,7 +198,11 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // Mint intake code + send email with ?code=... (requires x-intake-secret on Fly)
-  const callFlyIntakeMint = async (params: { customerId: string; email: string; alias: string }) => {
+  const callFlyIntakeMint = async (params: {
+    customerId: string;
+    email: string;
+    alias: string;
+  }) => {
     const { baseUrl, apiKey, contract, intakeSecret } = flyConfig();
     if (!intakeSecret) throw new Error("Missing env var: GOBLINALIAS_INTAKE_SECRET");
 
@@ -205,8 +231,36 @@ export const onRequestPost = async ({ request, env }: any) => {
     }
   };
 
+  // NEW: persist transaction into Neon through Fly
+  const callFlyOrdersUpsert = async (payload: any) => {
+    const { baseUrl, apiKey, contract } = flyConfig();
+
+    const resp = await fetch(`${baseUrl}/orders/upsert`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "x-ng-contract": contract,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await resp.text().catch(() => "");
+    if (!resp.ok) throw new Error(`Fly /orders/upsert failed (${resp.status}): ${text || "no body"}`);
+
+    const parsed = safeJsonParse(text);
+    if (!parsed) {
+      throw new Error(`Fly /orders/upsert returned non-JSON. Body="${(text || "").slice(0, 200)}"`);
+    }
+    return parsed;
+  };
+
   // ---- Only send intake once per customer/email ----
-  const maybeSendIntakeViaFlyOnce = async (params: { email: string | null; customerId: string | null; access: AccessState }) => {
+  const maybeSendIntakeViaFlyOnce = async (params: {
+    email: string | null;
+    customerId: string | null;
+    access: AccessState;
+  }) => {
     const emailLower = safeLower(params.email);
     const customerId = params.customerId ?? null;
 
@@ -216,7 +270,8 @@ export const onRequestPost = async ({ request, env }: any) => {
     if (!welcomeKey) return console.log("📧 intake not sent: missing email/customerId");
     if (!params.email) return console.log("📧 intake not sent: missing email");
     if (!customerId) return console.log("📧 intake not sent: missing customerId");
-    if (params.access !== "active") return console.log("📧 intake not sent: access not active", { access: params.access });
+    if (params.access !== "active")
+      return console.log("📧 intake not sent: access not active", { access: params.access });
 
     const alreadyWelcomed = await env.STRIPE_EVENTS.get(welcomeKey);
     if (alreadyWelcomed) {
@@ -229,7 +284,12 @@ export const onRequestPost = async ({ request, env }: any) => {
 
       // If we have intakeSecret: do 2-step (prevents duplicate emails)
       if (intakeSecret) {
-        const resAlias = await callFlyGenerateAlias({ email: params.email, customerId, skipEmail: true });
+        const resAlias = await callFlyGenerateAlias({
+          email: params.email,
+          customerId,
+          skipEmail: true,
+        });
+
         const alias = resAlias?.alias;
         if (!alias || typeof alias !== "string") throw new Error("Fly /generate-alias did not return alias");
 
@@ -244,7 +304,12 @@ export const onRequestPost = async ({ request, env }: any) => {
       }
 
       // Fallback: no intakeSecret => let /generate-alias send the email itself
-      const resAlias = await callFlyGenerateAlias({ email: params.email, customerId, skipEmail: false });
+      const resAlias = await callFlyGenerateAlias({
+        email: params.email,
+        customerId,
+        skipEmail: false,
+      });
+
       const alias = resAlias?.alias;
 
       await env.STRIPE_EVENTS.put(welcomeKey, "1", { expirationTtl: 60 * 60 * 24 * 365 });
@@ -255,6 +320,47 @@ export const onRequestPost = async ({ request, env }: any) => {
     }
   };
 
+  // ---- Helpers for pulling payment/subscription details ----
+  const expandCustomerId = (customer: any) =>
+    (typeof customer === "string" ? customer : customer?.id) ?? null;
+
+  const expandSubscriptionId = (subscription: any) =>
+    (typeof subscription === "string" ? subscription : subscription?.id) ?? null;
+
+  const expandPaymentIntentId = (pi: any) => (typeof pi === "string" ? pi : pi?.id) ?? null;
+
+  const getCheckoutLineItemPriceId = async (checkoutSessionId: string) => {
+    // For Checkout Sessions, the best way to read price/product is via listLineItems(expand price.product)
+    try {
+      const items = await stripe.checkout.sessions.listLineItems(checkoutSessionId, {
+        limit: 5,
+        expand: ["data.price.product"],
+      });
+      const li = items?.data?.[0];
+      const priceId = (li?.price as any)?.id ?? null;
+      const productId = ((li?.price as any)?.product as any)?.id ?? null;
+      return { priceId, productId };
+    } catch (e: any) {
+      console.log("ℹ️ could not read checkout line items:", e?.message || e);
+      return { priceId: null, productId: null };
+    }
+  };
+
+  const getSubscriptionPriceId = async (subscriptionId: string) => {
+    try {
+      const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ["items.data.price.product"],
+      });
+      const priceId = (sub?.items?.data?.[0]?.price as any)?.id ?? null;
+      const productId = ((sub?.items?.data?.[0]?.price as any)?.product as any)?.id ?? null;
+      const status = sub?.status ?? null;
+      return { priceId, productId, subscriptionStatus: status };
+    } catch (e: any) {
+      console.log("ℹ️ could not retrieve subscription:", e?.message || e);
+      return { priceId: null, productId: null, subscriptionStatus: null };
+    }
+  };
+
   // ---- Event routing ----
   switch (event.type) {
     case "checkout.session.completed": {
@@ -262,12 +368,13 @@ export const onRequestPost = async ({ request, env }: any) => {
 
       const session = event.data.object as Stripe.Checkout.Session;
 
-      let customerId = (typeof session.customer === "string" ? session.customer : session.customer?.id) ?? null;
+      let customerId = expandCustomerId(session.customer);
+      const checkoutSessionId = session.id ?? null;
 
-      const email = session.customer_email ?? session.customer_details?.email ?? null;
+      const email = session.customer_email ?? (session.customer_details as any)?.email ?? null;
 
-      const subscriptionId =
-        (typeof session.subscription === "string" ? session.subscription : session.subscription?.id) ?? null;
+      const subscriptionId = expandSubscriptionId(session.subscription);
+      const paymentIntentId = expandPaymentIntentId((session as any).payment_intent);
 
       // Best-effort recovery if customerId absent.
       if (!customerId && email) {
@@ -280,23 +387,90 @@ export const onRequestPost = async ({ request, env }: any) => {
         }
       }
 
+      // Determine access + tier
       let subscriptionStatus: string | null = null;
       let priceId: string | null = null;
+      let productId: string | null = null;
 
-      try {
-        if (subscriptionId) {
-          const sub = await stripe.subscriptions.retrieve(subscriptionId, { expand: ["items.data.price"] });
-          subscriptionStatus = sub.status ?? null;
-          priceId = sub.items?.data?.[0]?.price?.id ?? null;
-        }
-      } catch (err: any) {
-        console.error("❌ Failed to retrieve subscription:", err?.message || err);
+      if (subscriptionId) {
+        const subInfo = await getSubscriptionPriceId(subscriptionId);
+        subscriptionStatus = subInfo.subscriptionStatus;
+        priceId = subInfo.priceId;
+        productId = subInfo.productId;
+      } else if (checkoutSessionId) {
+        const liInfo = await getCheckoutLineItemPriceId(checkoutSessionId);
+        priceId = liInfo.priceId;
+        productId = liInfo.productId;
       }
 
       const tier = tierFromPriceId(priceId, env);
-      const access: AccessState = isActiveStatus(subscriptionStatus) ? "active" : "locked";
 
-      await upsertCustomerRecord({ email, customerId, subscriptionId, subscriptionStatus, priceId, tier, access });
+      // For non-subscription (one-time) sessions, treat completion as "active" access to the intake
+      const access: AccessState = subscriptionId
+        ? isActiveStatus(subscriptionStatus)
+          ? "active"
+          : "locked"
+        : "active";
+
+      await upsertCustomerRecord({
+        email,
+        customerId,
+        subscriptionId,
+        subscriptionStatus,
+        priceId,
+        tier,
+        access,
+      });
+
+      // ✅ Persist transaction into Neon through Fly (best-effort; do not break webhook)
+      try {
+        if (customerId) {
+          const amountTotal = typeof (session as any).amount_total === "number" ? (session as any).amount_total : null;
+          const currency = (session as any).currency ?? null;
+          const mode = (session as any).mode ?? null;
+          const status = (session as any).status ?? null;
+
+          await callFlyOrdersUpsert({
+            stripeEventId: event.id,
+            checkoutSessionId,
+            paymentIntentId,
+            stripeCustomerId: customerId,
+            customerEmail: email,
+            amountTotal,
+            currency,
+            mode,
+            status,
+            priceId,
+            productId,
+            tier,
+            purchasedAt: now,
+            raw: {
+              // keep snapshot small-ish; don't dump full objects if you don't want to
+              eventType: event.type,
+              checkoutSessionId,
+              customerId,
+              subscriptionId,
+              paymentIntentId,
+              amountTotal,
+              currency,
+              mode,
+              status,
+              priceId,
+              productId,
+              tier,
+              email,
+            },
+          });
+
+          console.log("✅ stored order via Fly /orders/upsert");
+        } else {
+          console.log("ℹ️ skipped /orders/upsert: missing customerId");
+        }
+      } catch (e: any) {
+        console.error("⚠️ /orders/upsert failed (non-fatal):", e?.message || e);
+      }
+
+      // ✅ Send intake email once (via Fly)
       await maybeSendIntakeViaFlyOnce({ email, customerId, access });
 
       break;
@@ -306,16 +480,59 @@ export const onRequestPost = async ({ request, env }: any) => {
       console.log("🔁 customer.subscription.updated");
 
       const sub = event.data.object as Stripe.Subscription;
-      const customerId = (typeof sub.customer === "string" ? sub.customer : sub.customer?.id) ?? null;
+      const customerId = expandCustomerId(sub.customer);
 
       const subscriptionId = sub.id ?? null;
       const subscriptionStatus = sub.status ?? null;
-      const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+
+      const priceId = (sub.items?.data?.[0]?.price as any)?.id ?? null;
+      const productId = ((sub.items?.data?.[0]?.price as any)?.product as any)?.id ?? null;
 
       const tier = tierFromPriceId(priceId, env);
       const access: AccessState = isActiveStatus(subscriptionStatus) ? "active" : "locked";
 
-      await upsertCustomerRecord({ customerId, subscriptionId, subscriptionStatus, priceId, tier, access });
+      await upsertCustomerRecord({
+        customerId,
+        subscriptionId,
+        subscriptionStatus,
+        priceId,
+        tier,
+        access,
+      });
+
+      // Optional: persist subscription state changes as order snapshots (best-effort)
+      try {
+        if (customerId) {
+          await callFlyOrdersUpsert({
+            stripeEventId: event.id,
+            checkoutSessionId: null,
+            paymentIntentId: null,
+            stripeCustomerId: customerId,
+            customerEmail: null,
+            amountTotal: null,
+            currency: null,
+            mode: "subscription",
+            status: subscriptionStatus,
+            priceId,
+            productId,
+            tier,
+            purchasedAt: now,
+            raw: {
+              eventType: event.type,
+              customerId,
+              subscriptionId,
+              subscriptionStatus,
+              priceId,
+              productId,
+              tier,
+            },
+          });
+          console.log("✅ stored subscription update snapshot via /orders/upsert");
+        }
+      } catch (e: any) {
+        console.error("⚠️ /orders/upsert snapshot failed (non-fatal):", e?.message || e);
+      }
+
       break;
     }
 
@@ -323,12 +540,45 @@ export const onRequestPost = async ({ request, env }: any) => {
       console.log("⚠️ invoice.payment_failed (locking access)");
 
       const invoice = event.data.object as Stripe.Invoice;
-      const customerId = (typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id) ?? null;
+      const customerId = expandCustomerId(invoice.customer);
 
-      const subscriptionId =
-        (typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id) ?? null;
+      const subscriptionId = expandSubscriptionId(invoice.subscription);
 
       await upsertCustomerRecord({ customerId, subscriptionId, access: "locked" });
+
+      // Optional snapshot
+      try {
+        if (customerId) {
+          const paymentIntentId = expandPaymentIntentId((invoice as any).payment_intent);
+          await callFlyOrdersUpsert({
+            stripeEventId: event.id,
+            checkoutSessionId: null,
+            paymentIntentId,
+            stripeCustomerId: customerId,
+            customerEmail: (invoice as any).customer_email ?? null,
+            amountTotal: typeof (invoice as any).amount_due === "number" ? (invoice as any).amount_due : null,
+            currency: (invoice as any).currency ?? null,
+            mode: "subscription",
+            status: "payment_failed",
+            priceId: null,
+            productId: null,
+            tier: null,
+            purchasedAt: now,
+            raw: {
+              eventType: event.type,
+              customerId,
+              subscriptionId,
+              paymentIntentId,
+              amountDue: (invoice as any).amount_due ?? null,
+              currency: (invoice as any).currency ?? null,
+            },
+          });
+          console.log("✅ stored invoice.payment_failed snapshot via /orders/upsert");
+        }
+      } catch (e: any) {
+        console.error("⚠️ /orders/upsert snapshot failed (non-fatal):", e?.message || e);
+      }
+
       break;
     }
 
@@ -336,14 +586,54 @@ export const onRequestPost = async ({ request, env }: any) => {
       console.log("🛑 customer.subscription.deleted (locking access)");
 
       const sub = event.data.object as Stripe.Subscription;
-      const customerId = (typeof sub.customer === "string" ? sub.customer : sub.customer?.id) ?? null;
+      const customerId = expandCustomerId(sub.customer);
+
+      const priceId = (sub.items?.data?.[0]?.price as any)?.id ?? null;
+      const productId = ((sub.items?.data?.[0]?.price as any)?.product as any)?.id ?? null;
+      const tier = tierFromPriceId(priceId, env);
 
       await upsertCustomerRecord({
         customerId,
         subscriptionId: sub.id ?? null,
         subscriptionStatus: sub.status ?? "canceled",
+        priceId,
+        tier,
         access: "locked",
       });
+
+      // Optional snapshot
+      try {
+        if (customerId) {
+          await callFlyOrdersUpsert({
+            stripeEventId: event.id,
+            checkoutSessionId: null,
+            paymentIntentId: null,
+            stripeCustomerId: customerId,
+            customerEmail: null,
+            amountTotal: null,
+            currency: null,
+            mode: "subscription",
+            status: "canceled",
+            priceId,
+            productId,
+            tier,
+            purchasedAt: now,
+            raw: {
+              eventType: event.type,
+              customerId,
+              subscriptionId: sub.id ?? null,
+              subscriptionStatus: sub.status ?? "canceled",
+              priceId,
+              productId,
+              tier,
+            },
+          });
+          console.log("✅ stored subscription deleted snapshot via /orders/upsert");
+        }
+      } catch (e: any) {
+        console.error("⚠️ /orders/upsert snapshot failed (non-fatal):", e?.message || e);
+      }
+
       break;
     }
 

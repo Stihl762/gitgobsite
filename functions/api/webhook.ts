@@ -12,7 +12,8 @@ import Stripe from "stripe";
  * - STRIPE_WEBHOOK_SECRET
  *
  * Env vars for Stripe Price IDs (optional mapping to tiers):
- * - STRIPE_PRICE_ID_FIRSTFLAME
+ * - STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL
+ * - STRIPE_PRICE_ID_FIRSTFLAME_PAIR
  *
  * Env vars to call Fly:
  * - GOBLINALIAS_URL
@@ -35,6 +36,11 @@ type CustomerRecord = {
   subscriptionStatus: string | null;
   priceId: string | null;
   tier: string | null;
+
+  // NEW: persist which plan they purchased (Individual vs Pair)
+  planKey: string | null;
+  planName: string | null;
+
   access: AccessState;
   updatedAt: string;
   lastEventId: string;
@@ -60,9 +66,29 @@ const requireEnv = (env: any, key: string) => {
 
 const tierFromPriceId = (priceId: string | null | undefined, env: any) => {
   if (!priceId) return null;
+
   const map: Record<string, string> = {};
-  if (env?.STRIPE_PRICE_ID_FIRSTFLAME) map[env.STRIPE_PRICE_ID_FIRSTFLAME] = "firstflame";
+
+  // First Flame (two prices -> same tier)
+  if (env?.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL)
+    map[env.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL] = "firstflame";
+  if (env?.STRIPE_PRICE_ID_FIRSTFLAME_PAIR)
+    map[env.STRIPE_PRICE_ID_FIRSTFLAME_PAIR] = "firstflame";
+
   return map[priceId] || null;
+};
+
+const planFromPriceId = (priceId: string | null | undefined, env: any) => {
+  if (!priceId) return { planKey: null, planName: null };
+
+  if (env?.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL && priceId === env.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL) {
+    return { planKey: "firstflame_individual", planName: "First Flame: Individual" };
+  }
+  if (env?.STRIPE_PRICE_ID_FIRSTFLAME_PAIR && priceId === env.STRIPE_PRICE_ID_FIRSTFLAME_PAIR) {
+    return { planKey: "firstflame_pair", planName: "First Flame: Household Pair" };
+  }
+
+  return { planKey: null, planName: null };
 };
 
 const safeJsonParse = (s: string | null) => {
@@ -138,6 +164,10 @@ export const onRequestPost = async ({ request, env }: any) => {
       subscriptionStatus: existing?.subscriptionStatus ?? null,
       priceId: existing?.priceId ?? null,
       tier: existing?.tier ?? null,
+
+      planKey: existing?.planKey ?? null,
+      planName: existing?.planName ?? null,
+
       access: existing?.access ?? "locked",
       updatedAt: now,
       lastEventId: event.id,
@@ -149,6 +179,7 @@ export const onRequestPost = async ({ request, env }: any) => {
     console.log("🧾 stored record:", key, {
       access: next.access,
       tier: next.tier,
+      planKey: next.planKey,
       status: next.subscriptionStatus,
     });
   };
@@ -164,11 +195,7 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // Create alias (idempotent by Stripe event id). Returns JSON { success, alias, ... }
-  const callFlyGenerateAlias = async (params: {
-    email: string;
-    customerId: string;
-    skipEmail: boolean;
-  }) => {
+  const callFlyGenerateAlias = async (params: { email: string; customerId: string; skipEmail: boolean }) => {
     const { baseUrl, apiKey, contract } = flyConfig();
     const idem = `stripe:${event.id}`;
 
@@ -198,11 +225,7 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // Mint intake code + send email with ?code=... (requires x-intake-secret on Fly)
-  const callFlyIntakeMint = async (params: {
-    customerId: string;
-    email: string;
-    alias: string;
-  }) => {
+  const callFlyIntakeMint = async (params: { customerId: string; email: string; alias: string }) => {
     const { baseUrl, apiKey, contract, intakeSecret } = flyConfig();
     if (!intakeSecret) throw new Error("Missing env var: GOBLINALIAS_INTAKE_SECRET");
 
@@ -256,11 +279,7 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // ---- Only send intake once per customer/email ----
-  const maybeSendIntakeViaFlyOnce = async (params: {
-    email: string | null;
-    customerId: string | null;
-    access: AccessState;
-  }) => {
+  const maybeSendIntakeViaFlyOnce = async (params: { email: string | null; customerId: string | null; access: AccessState }) => {
     const emailLower = safeLower(params.email);
     const customerId = params.customerId ?? null;
 
@@ -321,8 +340,7 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // ---- Helpers for pulling payment/subscription details ----
-  const expandCustomerId = (customer: any) =>
-    (typeof customer === "string" ? customer : customer?.id) ?? null;
+  const expandCustomerId = (customer: any) => (typeof customer === "string" ? customer : customer?.id) ?? null;
 
   const expandSubscriptionId = (subscription: any) =>
     (typeof subscription === "string" ? subscription : subscription?.id) ?? null;
@@ -376,6 +394,10 @@ export const onRequestPost = async ({ request, env }: any) => {
       const subscriptionId = expandSubscriptionId(session.subscription);
       const paymentIntentId = expandPaymentIntentId((session as any).payment_intent);
 
+      // Pull plan metadata from Checkout Session (set by /api/checkout)
+      let planKey: string | null = (session.metadata as any)?.planKey ?? null;
+      let planName: string | null = (session.metadata as any)?.planName ?? null;
+
       // Best-effort recovery if customerId absent.
       if (!customerId && email) {
         try {
@@ -387,7 +409,7 @@ export const onRequestPost = async ({ request, env }: any) => {
         }
       }
 
-      // Determine access + tier
+      // Determine access + tier + price
       let subscriptionStatus: string | null = null;
       let priceId: string | null = null;
       let productId: string | null = null;
@@ -405,6 +427,13 @@ export const onRequestPost = async ({ request, env }: any) => {
 
       const tier = tierFromPriceId(priceId, env);
 
+      // If checkout metadata missing, infer plan from priceId
+      if ((!planKey || !planName) && priceId) {
+        const inferred = planFromPriceId(priceId, env);
+        planKey = planKey ?? inferred.planKey;
+        planName = planName ?? inferred.planName;
+      }
+
       // For non-subscription (one-time) sessions, treat completion as "active" access to the intake
       const access: AccessState = subscriptionId
         ? isActiveStatus(subscriptionStatus)
@@ -419,6 +448,8 @@ export const onRequestPost = async ({ request, env }: any) => {
         subscriptionStatus,
         priceId,
         tier,
+        planKey,
+        planName,
         access,
       });
 
@@ -443,9 +474,10 @@ export const onRequestPost = async ({ request, env }: any) => {
             priceId,
             productId,
             tier,
+            planKey,
+            planName,
             purchasedAt: now,
             raw: {
-              // keep snapshot small-ish; don't dump full objects if you don't want to
               eventType: event.type,
               checkoutSessionId,
               customerId,
@@ -458,6 +490,8 @@ export const onRequestPost = async ({ request, env }: any) => {
               priceId,
               productId,
               tier,
+              planKey,
+              planName,
               email,
             },
           });
@@ -491,12 +525,26 @@ export const onRequestPost = async ({ request, env }: any) => {
       const tier = tierFromPriceId(priceId, env);
       const access: AccessState = isActiveStatus(subscriptionStatus) ? "active" : "locked";
 
+      // OPTIONAL BIT (enabled): read planKey/planName from Subscription metadata,
+      // falling back to price inference if absent.
+      const subMeta: any = (sub as any).metadata || {};
+      let planKey: string | null = subMeta?.planKey ?? null;
+      let planName: string | null = subMeta?.planName ?? null;
+
+      if ((!planKey || !planName) && priceId) {
+        const inferred = planFromPriceId(priceId, env);
+        planKey = planKey ?? inferred.planKey;
+        planName = planName ?? inferred.planName;
+      }
+
       await upsertCustomerRecord({
         customerId,
         subscriptionId,
         subscriptionStatus,
         priceId,
         tier,
+        planKey,
+        planName,
         access,
       });
 
@@ -516,6 +564,8 @@ export const onRequestPost = async ({ request, env }: any) => {
             priceId,
             productId,
             tier,
+            planKey,
+            planName,
             purchasedAt: now,
             raw: {
               eventType: event.type,
@@ -525,6 +575,8 @@ export const onRequestPost = async ({ request, env }: any) => {
               priceId,
               productId,
               tier,
+              planKey,
+              planName,
             },
           });
           console.log("✅ stored subscription update snapshot via /orders/upsert");
@@ -563,6 +615,8 @@ export const onRequestPost = async ({ request, env }: any) => {
             priceId: null,
             productId: null,
             tier: null,
+            planKey: null,
+            planName: null,
             purchasedAt: now,
             raw: {
               eventType: event.type,
@@ -592,12 +646,26 @@ export const onRequestPost = async ({ request, env }: any) => {
       const productId = ((sub.items?.data?.[0]?.price as any)?.product as any)?.id ?? null;
       const tier = tierFromPriceId(priceId, env);
 
+      // OPTIONAL BIT (enabled): read planKey/planName from Subscription metadata,
+      // falling back to price inference if absent.
+      const subMeta: any = (sub as any).metadata || {};
+      let planKey: string | null = subMeta?.planKey ?? null;
+      let planName: string | null = subMeta?.planName ?? null;
+
+      if ((!planKey || !planName) && priceId) {
+        const inferred = planFromPriceId(priceId, env);
+        planKey = planKey ?? inferred.planKey;
+        planName = planName ?? inferred.planName;
+      }
+
       await upsertCustomerRecord({
         customerId,
         subscriptionId: sub.id ?? null,
         subscriptionStatus: sub.status ?? "canceled",
         priceId,
         tier,
+        planKey,
+        planName,
         access: "locked",
       });
 
@@ -617,6 +685,8 @@ export const onRequestPost = async ({ request, env }: any) => {
             priceId,
             productId,
             tier,
+            planKey,
+            planName,
             purchasedAt: now,
             raw: {
               eventType: event.type,
@@ -626,6 +696,8 @@ export const onRequestPost = async ({ request, env }: any) => {
               priceId,
               productId,
               tier,
+              planKey,
+              planName,
             },
           });
           console.log("✅ stored subscription deleted snapshot via /orders/upsert");

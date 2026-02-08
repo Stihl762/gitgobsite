@@ -11,7 +11,7 @@ import Stripe from "stripe";
  * - STRIPE_SECRET_KEY
  * - STRIPE_WEBHOOK_SECRET
  *
- * Env vars for Stripe Price IDs (optional mapping to tiers):
+ * Env vars for Stripe Price IDs:
  * - STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL
  * - STRIPE_PRICE_ID_FIRSTFLAME_PAIR
  *
@@ -23,8 +23,15 @@ import Stripe from "stripe";
  * Optional (enables /intake/mint):
  * - GOBLINALIAS_INTAKE_SECRET (must match Fly INTAKE_TOKEN_SECRET)
  *
- * NEW (recommended): enable Neon transaction persistence via Fly:
+ * OPTIONAL (recommended): enable Neon transaction persistence via Fly:
  * - (no extra env needed) uses Fly /orders/upsert with same api key + contract
+ *
+ * OPTIONAL (recommended): route to correct intake form page:
+ * - WEB_INTAKE_URL_INDIVIDUAL  (e.g. https://netgoblin.org/intake)
+ * - WEB_INTAKE_URL_PAIR        (e.g. https://netgoblin.org/intake-pair)
+ *
+ * If those are missing, we fall back to:
+ * - WEB_INTAKE_BASE_URL or DEFAULT_INTAKE_URL (on Fly), and ultimately /intake.
  */
 
 type AccessState = "active" | "locked";
@@ -37,7 +44,7 @@ type CustomerRecord = {
   priceId: string | null;
   tier: string | null;
 
-  // NEW: persist which plan they purchased (Individual vs Pair)
+  // Persist which plan they purchased (Individual vs Pair)
   planKey: string | null;
   planName: string | null;
 
@@ -81,11 +88,20 @@ const tierFromPriceId = (priceId: string | null | undefined, env: any) => {
 const planFromPriceId = (priceId: string | null | undefined, env: any) => {
   if (!priceId) return { planKey: null, planName: null };
 
-  if (env?.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL && priceId === env.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL) {
-    return { planKey: "firstflame_individual", planName: "First Flame: Individual" };
+  if (
+    env?.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL &&
+    priceId === env.STRIPE_PRICE_ID_FIRSTFLAME_INDIVIDUAL
+  ) {
+    return {
+      planKey: "firstflame_individual",
+      planName: "First Flame: Individual",
+    };
   }
   if (env?.STRIPE_PRICE_ID_FIRSTFLAME_PAIR && priceId === env.STRIPE_PRICE_ID_FIRSTFLAME_PAIR) {
-    return { planKey: "firstflame_pair", planName: "First Flame: Household Pair" };
+    return {
+      planKey: "firstflame_pair",
+      planName: "First Flame: Household Pair",
+    };
   }
 
   return { planKey: null, planName: null };
@@ -98,6 +114,19 @@ const safeJsonParse = (s: string | null) => {
   } catch {
     return null;
   }
+};
+
+// Resolve which intake page should be used for this plan.
+// We pass this through to Fly /intake/mint as "intakeBaseUrl" (optional).
+const intakeBaseUrlFromPlan = (planKey: string | null | undefined, env: any) => {
+  const indiv = env?.WEB_INTAKE_URL_INDIVIDUAL || null; // https://netgoblin.org/intake
+  const pair = env?.WEB_INTAKE_URL_PAIR || null; // https://netgoblin.org/intake-pair
+
+  if (planKey === "firstflame_individual") return indiv;
+  if (planKey === "firstflame_pair") return pair;
+
+  // If plan unknown, prefer individual if present, else pair, else null (Fly fallback)
+  return indiv || pair || null;
 };
 
 export const onRequestPost = async ({ request, env }: any) => {
@@ -136,7 +165,6 @@ export const onRequestPost = async ({ request, env }: any) => {
   }
 
   // ---- Idempotency per Stripe event ----
-  // This is the *first* line of defense (fast). Fly also has DB idempotency via stripe_events.
   const lockKey = `stripe_event:${event.id}`;
   const already = await env.STRIPE_EVENTS.get(lockKey);
   if (already) {
@@ -195,7 +223,11 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // Create alias (idempotent by Stripe event id). Returns JSON { success, alias, ... }
-  const callFlyGenerateAlias = async (params: { email: string; customerId: string; skipEmail: boolean }) => {
+  const callFlyGenerateAlias = async (params: {
+    email: string;
+    customerId: string;
+    skipEmail: boolean;
+  }) => {
     const { baseUrl, apiKey, contract } = flyConfig();
     const idem = `stripe:${event.id}`;
 
@@ -209,23 +241,34 @@ export const onRequestPost = async ({ request, env }: any) => {
       },
       body: JSON.stringify({
         email: params.email,
-        stripeCustomerId: params.customerId, // ✅ REQUIRED by Fly
+        stripeCustomerId: params.customerId,
         skipEmail: params.skipEmail,
       }),
     });
 
     const text = await resp.text().catch(() => "");
-    if (!resp.ok) throw new Error(`Fly /generate-alias failed (${resp.status}): ${text || "no body"}`);
+    if (!resp.ok)
+      throw new Error(`Fly /generate-alias failed (${resp.status}): ${text || "no body"}`);
 
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(`Fly /generate-alias returned non-JSON. Body="${(text || "").slice(0, 200)}"`);
+      throw new Error(
+        `Fly /generate-alias returned non-JSON. Body="${(text || "").slice(0, 200)}"`
+      );
     }
   };
 
   // Mint intake code + send email with ?code=... (requires x-intake-secret on Fly)
-  const callFlyIntakeMint = async (params: { customerId: string; email: string; alias: string }) => {
+  // UPDATED: supports optional intakeBaseUrl + planKey + planName
+  const callFlyIntakeMint = async (params: {
+    customerId: string;
+    email: string;
+    alias: string;
+    planKey: string | null;
+    planName: string | null;
+    intakeBaseUrl: string | null;
+  }) => {
     const { baseUrl, apiKey, contract, intakeSecret } = flyConfig();
     if (!intakeSecret) throw new Error("Missing env var: GOBLINALIAS_INTAKE_SECRET");
 
@@ -241,6 +284,11 @@ export const onRequestPost = async ({ request, env }: any) => {
         stripeCustomerId: params.customerId,
         email: params.email,
         alias: params.alias,
+
+        // Optional routing info
+        planKey: params.planKey,
+        planName: params.planName,
+        intakeBaseUrl: params.intakeBaseUrl,
       }),
     });
 
@@ -254,7 +302,7 @@ export const onRequestPost = async ({ request, env }: any) => {
     }
   };
 
-  // NEW: persist transaction into Neon through Fly
+  // Persist transaction into Neon through Fly
   const callFlyOrdersUpsert = async (payload: any) => {
     const { baseUrl, apiKey, contract } = flyConfig();
 
@@ -279,12 +327,23 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // ---- Only send intake once per customer/email ----
-  const maybeSendIntakeViaFlyOnce = async (params: { email: string | null; customerId: string | null; access: AccessState }) => {
+  // UPDATED: passes planKey/planName so /intake/mint can build the correct intake URL.
+  const maybeSendIntakeViaFlyOnce = async (params: {
+    email: string | null;
+    customerId: string | null;
+    access: AccessState;
+    planKey: string | null;
+    planName: string | null;
+  }) => {
     const emailLower = safeLower(params.email);
     const customerId = params.customerId ?? null;
 
     const welcomeKey =
-      customerId ? `welcome_sent:cust:${customerId}` : emailLower ? `welcome_sent:email:${emailLower}` : null;
+      customerId
+        ? `welcome_sent:cust:${customerId}`
+        : emailLower
+          ? `welcome_sent:email:${emailLower}`
+          : null;
 
     if (!welcomeKey) return console.log("📧 intake not sent: missing email/customerId");
     if (!params.email) return console.log("📧 intake not sent: missing email");
@@ -310,13 +369,24 @@ export const onRequestPost = async ({ request, env }: any) => {
         });
 
         const alias = resAlias?.alias;
-        if (!alias || typeof alias !== "string") throw new Error("Fly /generate-alias did not return alias");
+        if (!alias || typeof alias !== "string")
+          throw new Error("Fly /generate-alias did not return alias");
 
-        const resMint = await callFlyIntakeMint({ customerId, email: params.email, alias });
+        const intakeBaseUrl = intakeBaseUrlFromPlan(params.planKey, env);
+
+        const resMint = await callFlyIntakeMint({
+          customerId,
+          email: params.email,
+          alias,
+          planKey: params.planKey,
+          planName: params.planName,
+          intakeBaseUrl,
+        });
 
         await env.STRIPE_EVENTS.put(welcomeKey, "1", { expirationTtl: 60 * 60 * 24 * 365 });
         console.log("📧 intake sent via Fly (/intake/mint):", params.email, {
           alias,
+          planKey: params.planKey,
           intakeUrl: resMint?.intakeUrl ? "(ok)" : "(no intakeUrl returned)",
         });
         return;
@@ -340,7 +410,8 @@ export const onRequestPost = async ({ request, env }: any) => {
   };
 
   // ---- Helpers for pulling payment/subscription details ----
-  const expandCustomerId = (customer: any) => (typeof customer === "string" ? customer : customer?.id) ?? null;
+  const expandCustomerId = (customer: any) =>
+    (typeof customer === "string" ? customer : customer?.id) ?? null;
 
   const expandSubscriptionId = (subscription: any) =>
     (typeof subscription === "string" ? subscription : subscription?.id) ?? null;
@@ -348,7 +419,6 @@ export const onRequestPost = async ({ request, env }: any) => {
   const expandPaymentIntentId = (pi: any) => (typeof pi === "string" ? pi : pi?.id) ?? null;
 
   const getCheckoutLineItemPriceId = async (checkoutSessionId: string) => {
-    // For Checkout Sessions, the best way to read price/product is via listLineItems(expand price.product)
     try {
       const items = await stripe.checkout.sessions.listLineItems(checkoutSessionId, {
         limit: 5,
@@ -389,7 +459,8 @@ export const onRequestPost = async ({ request, env }: any) => {
       let customerId = expandCustomerId(session.customer);
       const checkoutSessionId = session.id ?? null;
 
-      const email = session.customer_email ?? (session.customer_details as any)?.email ?? null;
+      const email =
+        session.customer_email ?? (session.customer_details as any)?.email ?? null;
 
       const subscriptionId = expandSubscriptionId(session.subscription);
       const paymentIntentId = expandPaymentIntentId((session as any).payment_intent);
@@ -434,7 +505,7 @@ export const onRequestPost = async ({ request, env }: any) => {
         planName = planName ?? inferred.planName;
       }
 
-      // For non-subscription (one-time) sessions, treat completion as "active" access to the intake
+      // For non-subscription sessions, treat completion as active access to the intake
       const access: AccessState = subscriptionId
         ? isActiveStatus(subscriptionStatus)
           ? "active"
@@ -453,10 +524,11 @@ export const onRequestPost = async ({ request, env }: any) => {
         access,
       });
 
-      // ✅ Persist transaction into Neon through Fly (best-effort; do not break webhook)
+      // Persist transaction into Neon through Fly (best-effort)
       try {
         if (customerId) {
-          const amountTotal = typeof (session as any).amount_total === "number" ? (session as any).amount_total : null;
+          const amountTotal =
+            typeof (session as any).amount_total === "number" ? (session as any).amount_total : null;
           const currency = (session as any).currency ?? null;
           const mode = (session as any).mode ?? null;
           const status = (session as any).status ?? null;
@@ -504,8 +576,8 @@ export const onRequestPost = async ({ request, env }: any) => {
         console.error("⚠️ /orders/upsert failed (non-fatal):", e?.message || e);
       }
 
-      // ✅ Send intake email once (via Fly)
-      await maybeSendIntakeViaFlyOnce({ email, customerId, access });
+      // ✅ Send intake email once (via Fly) — will mint link to correct form
+      await maybeSendIntakeViaFlyOnce({ email, customerId, access, planKey, planName });
 
       break;
     }
@@ -525,8 +597,8 @@ export const onRequestPost = async ({ request, env }: any) => {
       const tier = tierFromPriceId(priceId, env);
       const access: AccessState = isActiveStatus(subscriptionStatus) ? "active" : "locked";
 
-      // OPTIONAL BIT (enabled): read planKey/planName from Subscription metadata,
-      // falling back to price inference if absent.
+      // OPTIONAL BIT: read planKey/planName from Subscription metadata (if you ever set it),
+      // else infer from priceId
       const subMeta: any = (sub as any).metadata || {};
       let planKey: string | null = subMeta?.planKey ?? null;
       let planName: string | null = subMeta?.planName ?? null;
@@ -646,8 +718,8 @@ export const onRequestPost = async ({ request, env }: any) => {
       const productId = ((sub.items?.data?.[0]?.price as any)?.product as any)?.id ?? null;
       const tier = tierFromPriceId(priceId, env);
 
-      // OPTIONAL BIT (enabled): read planKey/planName from Subscription metadata,
-      // falling back to price inference if absent.
+      // OPTIONAL BIT: read planKey/planName from Subscription metadata,
+      // else infer from priceId
       const subMeta: any = (sub as any).metadata || {};
       let planKey: string | null = subMeta?.planKey ?? null;
       let planName: string | null = subMeta?.planName ?? null;

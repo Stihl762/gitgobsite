@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 type StartResp =
-  | { status: "PENDING"; requestId: string; planKey?: string | null; planName?: string | null }
+  | {
+      status: "PENDING";
+      requestId: string;
+      planKey?: string | null;
+      planName?: string | null;
+    }
   | { status: "SUBMITTED"; requestId: string }
   | { status: "INVALID"; requestId: string }
   | { status: "ERROR"; requestId?: string; details?: string };
@@ -27,7 +32,7 @@ type PersonPayload = {
   address: string;
 };
 
-export default function IntakeIndividualPage() {
+export default function IntakePairPage() {
   const router = useRouter();
   const code = typeof router.query.code === "string" ? router.query.code : "";
 
@@ -37,9 +42,12 @@ export default function IntakeIndividualPage() {
 
   const [msg, setMsg] = useState("");
 
-  // Optional: show plan info if returned (helps debugging during rollout)
   const [planKey, setPlanKey] = useState<string | null>(null);
   const [planName, setPlanName] = useState<string | null>(null);
+
+  // ✅ derived: can they use Person 2?
+  // Fail-closed: only explicit firstflame_pair enables person2.
+  const allowPerson2 = planKey === "firstflame_pair";
 
   // Person 1 (required)
   const [p1FullName, setP1FullName] = useState("");
@@ -47,13 +55,26 @@ export default function IntakeIndividualPage() {
   const [p1Phone, setP1Phone] = useState("");
   const [p1Address, setP1Address] = useState("");
 
+  // Person 2 (only required if plan allows)
+  const [p2FullName, setP2FullName] = useState("");
+  const [p2Dob, setP2Dob] = useState("");
+  const [p2Phone, setP2Phone] = useState("");
+  const [p2Address, setP2Address] = useState("");
+
   const person1Ok = useMemo(() => {
     return (
       p1FullName.trim() && p1Dob.trim() && p1Phone.trim() && p1Address.trim()
     );
   }, [p1FullName, p1Dob, p1Phone, p1Address]);
 
-  const canSubmit = person1Ok;
+  const person2Ok = useMemo(() => {
+    return (
+      p2FullName.trim() && p2Dob.trim() && p2Phone.trim() && p2Address.trim()
+    );
+  }, [p2FullName, p2Dob, p2Phone, p2Address]);
+
+  // ✅ If they are not allowed person2, we only require person1
+  const canSubmit = allowPerson2 ? person1Ok && person2Ok : person1Ok;
 
   useEffect(() => {
     if (!code) return;
@@ -90,10 +111,9 @@ export default function IntakeIndividualPage() {
           setPlanKey(pk);
           setPlanName(pn);
 
-          // ✅ If they bought PAIR, send them to the pair form automatically
-          // (This prevents pair customers from filling the individual form by mistake.)
-          if (pk === "firstflame_pair") {
-            router.replace(`/intake-pair?code=${encodeURIComponent(code)}`);
+          // ✅ Optional: if individual customer lands on pair page, bounce them to individual
+          if (pk === "firstflame_individual") {
+            router.replace(`/intake?code=${encodeURIComponent(code)}`);
             return;
           }
 
@@ -102,7 +122,6 @@ export default function IntakeIndividualPage() {
         }
 
         if (data.status === "SUBMITTED") return setState("submitted");
-
         if (data.status === "INVALID") {
           setState("invalid");
           setMsg("This intake link is invalid or expired.");
@@ -130,7 +149,19 @@ export default function IntakeIndividualPage() {
       address: p1Address,
     };
 
-    const payload = { person1 };
+    // ✅ only include person2 if plan allows and at least something was entered
+    const person2Maybe =
+      allowPerson2 &&
+      (p2FullName.trim() || p2Dob.trim() || p2Phone.trim() || p2Address.trim())
+        ? ({
+            fullName: p2FullName,
+            dob: p2Dob,
+            phone: p2Phone,
+            address: p2Address,
+          } as PersonPayload)
+        : undefined;
+
+    const payload = { person1, ...(person2Maybe ? { person2: person2Maybe } : {}) };
 
     try {
       const res = await fetch("/api/intake/submit", {
@@ -155,9 +186,9 @@ export default function IntakeIndividualPage() {
         return;
       }
 
-      // ✅ helpful if we implement server-side plan enforcement (403 w/ status)
+      // If we add server-side plan enforcement later:
       if (res.status === 403) {
-        setMsg("Submit blocked: your plan does not allow this intake payload.");
+        setMsg("Submit blocked: your plan does not allow a second person.");
         return;
       }
 
@@ -183,13 +214,12 @@ export default function IntakeIndividualPage() {
         <div className="text-center">
           <h1 className="text-3xl sm:text-4xl font-bold leading-tight drop-shadow-[0_0_12px_rgba(255,191,0,0.12)]">
             <span className="block text-[#FFBF00]">Secure Intake</span>
-            <span className="block">First Flame: Individual</span>
+            <span className="block">First Flame: Household Pair</span>
           </h1>
           <p className="mt-4 text-sm sm:text-base text-[#E3DAC9]/80">
             This link is single-use. Complete it once, then we begin the hunt.
           </p>
 
-          {/* Debug during rollout (safe — doesn’t reveal the code). Remove later if you want. */}
           {(planKey || planName) && (
             <p className="mt-3 text-xs text-[#E3DAC9]/55">
               Plan: <span className="text-[#E3DAC9]/80">{planName || planKey}</span>
@@ -271,9 +301,21 @@ export default function IntakeIndividualPage() {
             {state === "pending" && (
               <div className="space-y-6">
                 <p className="text-sm text-[#E3DAC9]/80">
-                  Enter your information exactly as it appears on your legal
-                  documents. This helps us match and remove broker records.
+                  Enter your information exactly as it appears on legal documents.
+                  {allowPerson2
+                    ? " This helps us match and remove broker records for both people."
+                    : " Your plan is currently Individual—second person details are locked."}
                 </p>
+
+                {!allowPerson2 && (
+                  <div className="rounded-2xl border border-[#FFBF00]/35 bg-[#171710]/30 px-5 py-4 text-sm text-[#E3DAC9]/80">
+                    <div className="font-semibold text-[#FFBF00]">Second person locked</div>
+                    <div className="mt-1">
+                      You’re on the Individual plan. If you intended to protect two people,
+                      you’ll need the Household Pair plan.
+                    </div>
+                  </div>
+                )}
 
                 <Section title="Person 1 (Required)">
                   <Field
@@ -299,6 +341,41 @@ export default function IntakeIndividualPage() {
                     value={p1Address}
                     onChange={setP1Address}
                     placeholder="Street, City, State ZIP"
+                  />
+                </Section>
+
+                <Section
+                  title={allowPerson2 ? "Person 2 (Required)" : "Person 2 (Locked)"}
+                  muted={!allowPerson2}
+                  subtitle={!allowPerson2 ? "Upgrade required" : undefined}
+                >
+                  <Field
+                    label="Full legal name"
+                    value={p2FullName}
+                    onChange={setP2FullName}
+                    placeholder="First Middle Last"
+                    disabled={!allowPerson2}
+                  />
+                  <Field
+                    label="Date of birth"
+                    value={p2Dob}
+                    onChange={setP2Dob}
+                    placeholder="MM-DD-YYYY"
+                    disabled={!allowPerson2}
+                  />
+                  <Field
+                    label="Phone"
+                    value={p2Phone}
+                    onChange={setP2Phone}
+                    placeholder="(555) 555-5555"
+                    disabled={!allowPerson2}
+                  />
+                  <Field
+                    label="Address"
+                    value={p2Address}
+                    onChange={setP2Address}
+                    placeholder="Street, City, State ZIP"
+                    disabled={!allowPerson2}
                   />
                 </Section>
 
@@ -377,11 +454,13 @@ function Field({
   value,
   onChange,
   placeholder,
+  disabled,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className="block">
@@ -390,7 +469,9 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="
+        disabled={disabled}
+        className={cx(
+          `
           mt-2 w-full rounded-xl px-4 py-3
           bg-[#171710]/60
           border border-[#1F3B1D]/70
@@ -399,7 +480,9 @@ function Field({
           outline-none
           focus:border-[#FFBF00]/70 focus:ring-2 focus:ring-[#FFBF00]/20
           transition
-        "
+        `,
+          disabled && "opacity-60 cursor-not-allowed"
+        )}
       />
     </label>
   );

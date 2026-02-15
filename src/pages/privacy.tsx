@@ -9,7 +9,7 @@ export default function PrivacyPage() {
       <Header />
 
       <section className="px-6 py-16 max-w-3xl mx-auto">
-        <h1 className="text-3xl font-semibold text-header mb-2">
+        <h1 className="text-3xl font-semibold text-amber mb-2">
           NetGoblin Privacy Policy
         </h1>
 
@@ -83,7 +83,7 @@ export default function PrivacyPage() {
           <p className="text-ivory/90 mt-4">
             Contact:{" "}
             <a
-              className="text-header underline underline-offset-4"
+              className="text-amber underline underline-offset-4"
               href="mailto:support@netgoblin.org"
             >
               support@netgoblin.org
@@ -125,14 +125,14 @@ export default function PrivacyPage() {
         </PolicySection>
 
         <div className="mt-10 pt-6 border-t border-ivory/10">
-          <h2 className="text-xl font-semibold text-header mb-3">
+          <h2 className="text-xl font-semibold text-amber mb-3">
             Contact Information
           </h2>
           <p className="text-ivory/90">
             NetGoblin LLC — California, USA
             <br />
             <a
-              className="text-header underline underline-offset-4"
+              className="text-amber underline underline-offset-4"
               href="mailto:support@netgoblin.org"
             >
               support@netgoblin.org
@@ -155,7 +155,7 @@ function PolicySection({
 }) {
   return (
     <section className="mb-8">
-      <h2 className="text-xl font-semibold text-header mb-3">{title}</h2>
+      <h2 className="text-xl font-semibold text-amber mb-3">{title}</h2>
       <div className="space-y-3">{children}</div>
     </section>
   );

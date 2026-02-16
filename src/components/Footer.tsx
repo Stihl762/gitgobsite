@@ -14,6 +14,12 @@ export default function Footer() {
         text-[#E3DAC9]/80
       "
     >
+      {/* PATCH NOTES (sparknotes)
+         - Fixed Start Protection link
+         - Was: /#signup (no longer exists)
+         - Now: /#start (matches index.tsx anchor)
+      */}
+
       {/* Subtle highlight gradient */}
       <div
         className="
@@ -25,7 +31,7 @@ export default function Footer() {
       {/* Primary CTA for late scrollers */}
       <div className="mb-8">
         <Link
-          href="/#signup"
+          href="/#start"
           className="
             inline-block px-6 py-2.5 rounded-full
             bg-[#FFBF00] text-[#171710] text-sm font-semibold

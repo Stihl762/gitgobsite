@@ -1,3 +1,4 @@
+// src/components/RetroExposureTerminal.tsx
 "use client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
@@ -30,6 +31,7 @@ function makeFillerLine() {
   const hex = Array.from({ length: 8 }, () => "0123456789ABCDEF"[Math.floor(Math.random() * 16)]).join("");
   const status = ["OK", "PASS", "READY", "SYNC", "HOLD", "RUN"][Math.floor(Math.random() * 6)];
 
+  // “Important-looking” but generic. Does not imply data handling/storage.
   return `[${left}] ${mid.toUpperCase()}::${hex}  status=${status}`;
 }
 
@@ -49,6 +51,10 @@ export default function RetroExposureTerminal() {
 
   const rafRef = useRef<number | null>(null);
   const cycleStartRef = useRef<number>(0);
+
+  // Scroll refs to mimic a real terminal (always follow newest output)
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const script = useMemo(() => {
     const initEvents = [
@@ -89,7 +95,11 @@ export default function RetroExposureTerminal() {
 
     return {
       initEvents,
-      stream: { freezes, freezeHoldMs: 650 },
+      stream: {
+        freezes,
+        // ✅ Doubled highlight hold time (was 650ms)
+        freezeHoldMs: 1300,
+      },
       protect: { start: protectStart, barAStart, barBStart, barCStart, barSteps },
       protected: { start: protectedStart, popupInMs: 350, glowStartMs: 1000 },
     };
@@ -104,6 +114,19 @@ export default function RetroExposureTerminal() {
     setGlow(false);
     cycleStartRef.current = nowMs();
   }
+
+  // ✅ Auto-scroll to bottom whenever terminal output changes
+  useEffect(() => {
+    // Smooth-ish follow for realism; uses anchor when possible.
+    if (bottomAnchorRef.current) {
+      bottomAnchorRef.current.scrollIntoView({ behavior: "auto", block: "end" });
+      return;
+    }
+    // Fallback
+    if (scrollViewportRef.current) {
+      scrollViewportRef.current.scrollTop = scrollViewportRef.current.scrollHeight;
+    }
+  }, [lines, highlight, phase, bars, showPopup]);
 
   useEffect(() => {
     resetCycle();
@@ -146,7 +169,7 @@ export default function RetroExposureTerminal() {
           // ~11 lines/sec
           if (elapsed % 90 === 0) {
             const l = makeFillerLine();
-            setLines((prev) => [...prev, l].slice(-18));
+            setLines((prev) => [...prev, l].slice(-40)); // keep more history since we now scroll
           }
         }
       }
@@ -201,60 +224,75 @@ export default function RetroExposureTerminal() {
       />
 
       {/* Terminal content */}
-      <div className="relative h-full px-4 py-3 font-mono" style={{ color: AMBER }}>
+      <div className="relative h-full px-4 py-3 font-mono">
         {/* Top mini-header */}
-        <div className="flex items-center justify-between text-[10px] sm:text-xs tracking-widest mb-2"
-             style={{ color: "rgba(255,255,255,0.70)" }}>
+        <div
+          className="flex items-center justify-between text-[10px] sm:text-xs tracking-widest mb-2"
+          style={{ color: "rgba(255,255,255,0.70)" }}
+        >
           <span>NETGOBLIN // EXPOSURE SCAN</span>
           <span style={{ color: "rgba(255,255,255,0.55)" }}>Simulation mode</span>
         </div>
 
-        {/* Body */}
-        <div className="text-[11px] sm:text-sm leading-[1.35]">
-          {lines.map((l, idx) => (
-            <div key={idx} className="whitespace-pre-wrap">{l}</div>
-          ))}
+        {/* ✅ Scrollable viewport so it “scrolls down” like a real terminal */}
+        <div
+          ref={scrollViewportRef}
+          className="relative h-[calc(100%-22px)] overflow-y-auto pr-2"
+          style={{
+            // subtle scrollbar styling, safe to ignore if unsupported
+            scrollbarColor: `${AMBER} rgba(255,255,255,0.10)`,
+          }}
+        >
+          <div className="text-[11px] sm:text-sm leading-[1.35]" style={{ color: AMBER }}>
+            {lines.map((l, idx) => (
+              <div key={idx} className="whitespace-pre-wrap">
+                {l}
+              </div>
+            ))}
 
-          {highlight && (
-            <div
-              className="mt-2 font-semibold"
-              style={{ color: "#FFD37A", textShadow: "0 0 10px rgba(255,176,0,0.22)" }}
-            >
-              {highlight}
-            </div>
-          )}
+            {highlight && (
+              <div
+                className="mt-2 font-semibold"
+                style={{
+                  color: "#FFD37A",
+                  textShadow: "0 0 10px rgba(255,176,0,0.22)",
+                }}
+              >
+                {highlight}
+              </div>
+            )}
 
-          {phase === "protect" && (
-            <div className="mt-3 space-y-2">
-              <div className="flex gap-3">
-                <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
-                  Dispatching goblin agents
-                </span>
-                <span>{asciiBar(bars.a)}</span>
+            {phase === "protect" && (
+              <div className="mt-3 space-y-2">
+                <div className="flex gap-3">
+                  <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
+                    Dispatching goblin agents
+                  </span>
+                  <span>{asciiBar(bars.a)}</span>
+                </div>
+                <div className="flex gap-3">
+                  <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
+                    Submitting protection requests
+                  </span>
+                  <span>{asciiBar(bars.b)}</span>
+                </div>
+                <div className="flex gap-3">
+                  <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
+                    Awaiting confirmation
+                  </span>
+                  <span>{asciiBar(bars.c)}</span>
+                </div>
               </div>
-              <div className="flex gap-3">
-                <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
-                  Submitting protection requests
-                </span>
-                <span>{asciiBar(bars.b)}</span>
-              </div>
-              <div className="flex gap-3">
-                <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
-                  Awaiting confirmation
-                </span>
-                <span>{asciiBar(bars.c)}</span>
-              </div>
-              <div className="mt-2" style={{ color: "rgba(255,255,255,0.55)" }}>
-                ▌
-              </div>
-            </div>
-          )}
+            )}
 
-          {phase !== "protect" && (
+            {/* Cursor */}
             <div className="mt-2" style={{ color: "rgba(255,255,255,0.55)" }}>
               <span className="inline-block animate-pulse">▌</span>
             </div>
-          )}
+
+            {/* Anchor for auto-scroll */}
+            <div ref={bottomAnchorRef} />
+          </div>
         </div>
 
         {/* Stage 4 popup */}

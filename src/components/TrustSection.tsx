@@ -23,15 +23,15 @@ export default function TrustSection() {
   const faqs = [
     {
       q: "What happens after signup?",
-      a: "You’ll receive a secure intake link within minutes. Our goblins immediately begin broker removal requests and confirm your first scan results.",
+      a: "You’ll receive a secure intake link within minutes via email. After submitting your intake, our goblins immediately begin broker removal requests on your behalf.",
     },
     {
       q: "How does removal work?",
-      a: "We confront data brokers directly with verified opt-outs and legal demands, tracking each one until your data disappears from public access.",
+      a: "We confront data brokers directly with verified opt-outs and legal demands, tracking each one as we work constantly to protect and remove your personal data from brokers.",
     },
     {
       q: "Can I cancel anytime?",
-      a: "Yes. No tricks or contracts. You stay as long as you need our protection, then your goblins stand down.",
+      a: "Yes. No tricks or contracts. You stay as long as you need our protection, then your goblins stand down. Reach out to our support email will questions or requests.",
     },
   ];
 

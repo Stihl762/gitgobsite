@@ -1,5 +1,7 @@
+// src/components/HeroSection.tsx
 "use client";
 import { motion } from "framer-motion";
+import RetroExposureTerminal from "./RetroExposureTerminal";
 
 interface HeroSectionProps {
   onStartProtection?: () => void;
@@ -66,16 +68,16 @@ export default function HeroSection({ onStartProtection, onSeePlans }: HeroSecti
           </button>
         </div>
 
-        {/* Background Visual / Placeholder Animation */}
+        {/* Retro Terminal Animation (20s loop) */}
         <div
           className="
-            mt-12 h-48 sm:h-64 rounded-2xl 
-            bg-[#1F3B1D]/50 border border-[#1F3B1D]
-            flex items-center justify-center text-xs sm:text-sm text-[#E3DAC9]/40
+            mt-12 h-48 sm:h-64 rounded-2xl
+            border border-[#1F3B1D]
+            overflow-hidden
+            text-left
           "
         >
-          (Future visual: subtle looping animation of glowing data streams
-          being shredded by a goblin silhouette)
+          <RetroExposureTerminal />
         </div>
       </motion.div>
     </section>

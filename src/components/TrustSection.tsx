@@ -6,32 +6,32 @@ export default function TrustSection() {
     {
       quote:
         "I found over 30 brokers selling my info. Watching them vanish from search results was unreal.",
-      author: "— A. Reyes, Beta Tester",
+      author: "— A. Reyes, First Flame Beta Member",
     },
     {
       quote:
         "They actually talk to you like a human, not a robot. I feel protected and in control again.",
-      author: "— M. Han, Early Access Member",
+      author: "— M. Han, First Flame Beta Member",
     },
     {
       quote:
         "I signed up from my phone in under a minute. Smooth, simple, powerful. Worth every cent.",
-      author: "— K. Patel, Hunter Tier",
+      author: "— K. Patel, First Flame Beta Member",
     },
   ];
 
   const faqs = [
     {
       q: "What happens after signup?",
-      a: "You’ll receive a secure intake link within minutes. Our goblins immediately begin broker removal requests and confirm your first scan results.",
+      a: "You’ll receive a secure intake link within minutes via email. After submitting your intake, our goblins immediately begin broker removal requests on your behalf.",
     },
     {
       q: "How does removal work?",
-      a: "We confront data brokers directly with verified opt-outs and legal demands, tracking each one until your data disappears from public access.",
+      a: "We confront data brokers directly with verified opt-outs and legal demands, tracking each one as we work constantly to protect and remove your personal data from brokers.",
     },
     {
       q: "Can I cancel anytime?",
-      a: "Yes. No tricks or contracts. You stay as long as you need our protection, then your goblins stand down.",
+      a: "Yes. No tricks or contracts. You stay as long as you need our protection, then your goblins stand down. Reach out to our support email will questions or requests.",
     },
   ];
 

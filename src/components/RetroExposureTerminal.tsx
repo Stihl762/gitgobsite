@@ -4,8 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Phase = "init" | "stream" | "protect" | "protected";
 
-const AMBER = "#FFB000"; // per your screenshot
-const BG = "#282828";    // retro gray per your screenshot
+const AMBER = "#FFB000";
+const BG = "#282828";
 
 const TOTAL_MS = 20_000;
 
@@ -31,7 +31,6 @@ function makeFillerLine() {
   const hex = Array.from({ length: 8 }, () => "0123456789ABCDEF"[Math.floor(Math.random() * 16)]).join("");
   const status = ["OK", "PASS", "READY", "SYNC", "HOLD", "RUN"][Math.floor(Math.random() * 6)];
 
-  // “Important-looking” but generic. Does not imply data handling/storage.
   return `[${left}] ${mid.toUpperCase()}::${hex}  status=${status}`;
 }
 
@@ -52,9 +51,8 @@ export default function RetroExposureTerminal() {
   const rafRef = useRef<number | null>(null);
   const cycleStartRef = useRef<number>(0);
 
-  // Scroll refs to mimic a real terminal (always follow newest output)
-  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
-  const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
+  // ✅ This is the ONLY scrollable element we will ever scroll.
+  const terminalScrollRef = useRef<HTMLDivElement | null>(null);
 
   const script = useMemo(() => {
     const initEvents = [
@@ -97,7 +95,7 @@ export default function RetroExposureTerminal() {
       initEvents,
       stream: {
         freezes,
-        // ✅ Doubled highlight hold time (was 650ms)
+        // ✅ Highlight holds ~2x longer
         freezeHoldMs: 1300,
       },
       protect: { start: protectStart, barAStart, barBStart, barCStart, barSteps },
@@ -115,17 +113,16 @@ export default function RetroExposureTerminal() {
     cycleStartRef.current = nowMs();
   }
 
-  // ✅ Auto-scroll to bottom whenever terminal output changes
+  // ✅ Auto-scroll ONLY the terminal window (never the page)
   useEffect(() => {
-    // Smooth-ish follow for realism; uses anchor when possible.
-    if (bottomAnchorRef.current) {
-      bottomAnchorRef.current.scrollIntoView({ behavior: "auto", block: "end" });
-      return;
-    }
-    // Fallback
-    if (scrollViewportRef.current) {
-      scrollViewportRef.current.scrollTop = scrollViewportRef.current.scrollHeight;
-    }
+    const el = terminalScrollRef.current;
+    if (!el) return;
+
+    // If it isn't scrollable, do nothing (prevents any weird fallback behavior)
+    if (el.scrollHeight <= el.clientHeight) return;
+
+    // Scroll to bottom of terminal output
+    el.scrollTop = el.scrollHeight;
   }, [lines, highlight, phase, bars, showPopup]);
 
   useEffect(() => {
@@ -169,7 +166,7 @@ export default function RetroExposureTerminal() {
           // ~11 lines/sec
           if (elapsed % 90 === 0) {
             const l = makeFillerLine();
-            setLines((prev) => [...prev, l].slice(-40)); // keep more history since we now scroll
+            setLines((prev) => [...prev, l].slice(-80)); // keep enough history to make scrolling meaningful
           }
         }
       }
@@ -223,25 +220,22 @@ export default function RetroExposureTerminal() {
         }}
       />
 
-      {/* Terminal content */}
-      <div className="relative h-full px-4 py-3 font-mono">
-        {/* Top mini-header */}
+      {/* ✅ Flex column guarantees the body is the only scroll viewport */}
+      <div className="relative h-full px-4 py-3 font-mono flex flex-col">
+        {/* Header (non-scrolling) */}
         <div
-          className="flex items-center justify-between text-[10px] sm:text-xs tracking-widest mb-2"
+          className="flex items-center justify-between text-[10px] sm:text-xs tracking-widest mb-2 shrink-0"
           style={{ color: "rgba(255,255,255,0.70)" }}
         >
           <span>NETGOBLIN // EXPOSURE SCAN</span>
           <span style={{ color: "rgba(255,255,255,0.55)" }}>Simulation mode</span>
         </div>
 
-        {/* ✅ Scrollable viewport so it “scrolls down” like a real terminal */}
+        {/* Body (scrolling ONLY inside terminal) */}
         <div
-          ref={scrollViewportRef}
-          className="relative h-[calc(100%-22px)] overflow-y-auto pr-2"
-          style={{
-            // subtle scrollbar styling, safe to ignore if unsupported
-            scrollbarColor: `${AMBER} rgba(255,255,255,0.10)`,
-          }}
+          ref={terminalScrollRef}
+          className="flex-1 overflow-y-auto pr-2"
+          style={{ scrollbarColor: `${AMBER} rgba(255,255,255,0.10)` }}
         >
           <div className="text-[11px] sm:text-sm leading-[1.35]" style={{ color: AMBER }}>
             {lines.map((l, idx) => (
@@ -253,10 +247,7 @@ export default function RetroExposureTerminal() {
             {highlight && (
               <div
                 className="mt-2 font-semibold"
-                style={{
-                  color: "#FFD37A",
-                  textShadow: "0 0 10px rgba(255,176,0,0.22)",
-                }}
+                style={{ color: "#FFD37A", textShadow: "0 0 10px rgba(255,176,0,0.22)" }}
               >
                 {highlight}
               </div>
@@ -285,17 +276,13 @@ export default function RetroExposureTerminal() {
               </div>
             )}
 
-            {/* Cursor */}
             <div className="mt-2" style={{ color: "rgba(255,255,255,0.55)" }}>
               <span className="inline-block animate-pulse">▌</span>
             </div>
-
-            {/* Anchor for auto-scroll */}
-            <div ref={bottomAnchorRef} />
           </div>
         </div>
 
-        {/* Stage 4 popup */}
+        {/* Popup overlays terminal only (does not scroll the page) */}
         {showPopup && (
           <div
             className="absolute left-1/2 top-1/2 w-[88%] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border px-4 py-3"

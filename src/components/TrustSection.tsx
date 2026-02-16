@@ -6,17 +6,17 @@ export default function TrustSection() {
     {
       quote:
         "I found over 30 brokers selling my info. Watching them vanish from search results was unreal.",
-      author: "— A. Reyes, Beta Tester",
+      author: "— A. Reyes, First Flame Beta Member",
     },
     {
       quote:
         "They actually talk to you like a human, not a robot. I feel protected and in control again.",
-      author: "— M. Han, Early Access Member",
+      author: "— M. Han, First Flame Beta Member",
     },
     {
       quote:
         "I signed up from my phone in under a minute. Smooth, simple, powerful. Worth every cent.",
-      author: "— K. Patel, Hunter Tier",
+      author: "— K. Patel, First Flame Beta Member",
     },
   ];
 

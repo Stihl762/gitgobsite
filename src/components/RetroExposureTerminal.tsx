@@ -234,9 +234,10 @@ export default function RetroExposureTerminal() {
         {/* Body (scrolling ONLY inside terminal) */}
         <div
           ref={terminalScrollRef}
-          className="flex-1 overflow-y-auto pr-2"
-          style={{ scrollbarColor: `${AMBER} rgba(255,255,255,0.10)` }}
+          className="flex-1 overflow-y-auto pr-2 terminal-scroll"
+          style={{ scrollbarColor: `rgba(255,255,255,0.70) rgba(255,255,255,0.10)` }}
         >
+
           <div className="text-[11px] sm:text-sm leading-[1.35]" style={{ color: AMBER }}>
             {lines.map((l, idx) => (
               <div key={idx} className="whitespace-pre-wrap">

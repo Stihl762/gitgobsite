@@ -6,9 +6,18 @@ import { useState } from "react";
 interface HeaderProps {
   onClickPlans?: () => void;
   onClickStart?: () => void;
+
+  // NEW: allow pages like /privacy or /terms to provide direct route targets
+  plansHref?: string;
+  startHref?: string;
 }
 
-export default function Header({ onClickPlans, onClickStart }: HeaderProps) {
+export default function Header({
+  onClickPlans,
+  onClickStart,
+  plansHref = "/#tiers",
+  startHref = "/#start",
+}: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -35,7 +44,7 @@ export default function Header({ onClickPlans, onClickStart }: HeaderProps) {
         "
       ></div>
 
-      {/* Brand */}
+      {/* Brand -> always goes home top */}
       <Link href="/" className="flex items-center space-x-3 relative z-10 select-none">
         <Image
           src="/favicon.ico"
@@ -51,18 +60,34 @@ export default function Header({ onClickPlans, onClickStart }: HeaderProps) {
 
       {/* Desktop Navigation */}
       <nav className="hidden md:flex space-x-8 text-[#E3DAC9] text-sm font-medium relative z-10">
-        <button
-          onClick={onClickPlans}
-          className="hover:text-[#FFBF00] transition-colors"
-        >
-          Plans
-        </button>
-        <button
-          onClick={onClickStart}
-          className="hover:text-[#FFBF00] transition-colors"
-        >
-          Start Protection
-        </button>
+        {/* Plans: if handler exists, use it (smooth scroll on homepage). Otherwise link to homepage anchor */}
+        {onClickPlans ? (
+          <button
+            onClick={onClickPlans}
+            className="hover:text-[#FFBF00] transition-colors"
+          >
+            Plans
+          </button>
+        ) : (
+          <Link href={plansHref} className="hover:text-[#FFBF00] transition-colors">
+            Plans
+          </Link>
+        )}
+
+        {/* Start Protection: same logic */}
+        {onClickStart ? (
+          <button
+            onClick={onClickStart}
+            className="hover:text-[#FFBF00] transition-colors"
+          >
+            Start Protection
+          </button>
+        ) : (
+          <Link href={startHref} className="hover:text-[#FFBF00] transition-colors">
+            Start Protection
+          </Link>
+        )}
+
         <Link href="/about" className="hover:text-[#FFBF00] transition">
           About
         </Link>
@@ -94,24 +119,46 @@ export default function Header({ onClickPlans, onClickStart }: HeaderProps) {
             animate-fadeIn
           "
         >
-          <button
-            onClick={() => {
-              setMenuOpen(false);
-              onClickPlans?.();
-            }}
-            className="text-[#E3DAC9] hover:text-[#FFBF00] transition"
-          >
-            Plans
-          </button>
-          <button
-            onClick={() => {
-              setMenuOpen(false);
-              onClickStart?.();
-            }}
-            className="text-[#E3DAC9] hover:text-[#FFBF00] transition"
-          >
-            Start Protection
-          </button>
+          {onClickPlans ? (
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                onClickPlans();
+              }}
+              className="text-[#E3DAC9] hover:text-[#FFBF00] transition"
+            >
+              Plans
+            </button>
+          ) : (
+            <Link
+              href={plansHref}
+              onClick={() => setMenuOpen(false)}
+              className="text-[#E3DAC9] hover:text-[#FFBF00] transition"
+            >
+              Plans
+            </Link>
+          )}
+
+          {onClickStart ? (
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                onClickStart();
+              }}
+              className="text-[#E3DAC9] hover:text-[#FFBF00] transition"
+            >
+              Start Protection
+            </button>
+          ) : (
+            <Link
+              href={startHref}
+              onClick={() => setMenuOpen(false)}
+              className="text-[#E3DAC9] hover:text-[#FFBF00] transition"
+            >
+              Start Protection
+            </Link>
+          )}
+
           <Link
             href="/about"
             onClick={() => setMenuOpen(false)}

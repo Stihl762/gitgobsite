@@ -10,6 +10,14 @@ export default function HomePage() {
   const plansRef = useRef<HTMLElement | null>(null);
   const signupRef = useRef<HTMLDivElement | null>(null);
 
+  // PATCH NOTES (sparknotes)
+  // - Split scroll targets:
+  //   - Plans / See Plans -> tiers section
+  //   - Start Protection / Join the First Flame -> signup form
+  // - Added stable anchors for cross-page navigation:
+  //   - "/#tiers" (already present)
+  //   - "/#start" (added to signup wrapper)
+
   // Smooth scroll helpers
   const scrollToPlans = () => {
     if (!plansRef.current) return;
@@ -23,13 +31,21 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-[#171710] text-[#E3DAC9]">
-      {/* HEADER */}
+      {/* HEADER
+          - Plans button -> tiers section (smooth scroll)
+          - Start Protection -> signup form (smooth scroll)
+      */}
       <Header onClickPlans={scrollToPlans} onClickStart={scrollToSignup} />
 
-      {/* HERO — updated to jump straight into First Flame */}
+      {/* HERO
+          - See Plans -> tiers section (smooth scroll)
+          - Start Protection -> signup form (smooth scroll)
+      */}
       <HeroSection onStartProtection={scrollToSignup} onSeePlans={scrollToPlans} />
 
-      {/* BLURRED TIERS (coming soon) */}
+      {/* BLURRED TIERS (coming soon)
+          Anchor: "/#tiers"
+      */}
       <section
         ref={(el) => {
           plansRef.current = el;
@@ -63,6 +79,7 @@ export default function HomePage() {
             For now, only the chosen may enter the fire.
           </p>
 
+          {/* Join the First Flame -> signup form (smooth scroll) */}
           <button
             className="
               mt-4 px-6 py-3 rounded-full bg-[#FFBF00] text-[#171710] font-semibold
@@ -75,8 +92,11 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* SIGNUP FORM (First Flame Only) */}
-      <div ref={signupRef}>
+      {/* SIGNUP FORM (First Flame Only)
+          Anchor: "/#start"
+          - This lets /privacy and /terms header buttons jump here.
+      */}
+      <div ref={signupRef} id="start">
         <SignupForm />
       </div>
 

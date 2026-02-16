@@ -3,10 +3,33 @@ import React from "react";
 import Header from "../components/Header";
 import Footer from "../components/Footer";
 
+/**
+ * PATCH NOTES (sparknotes)
+ * - Wired Header navigation on this page:
+ *   - Brand ("NetGoblin") -> "/" (top of home page)
+ *   - Plans -> "/#tiers" (tiers section on home)
+ *   - Start Protection -> "/#start" (signup section on home)
+ *
+ * NOTE:
+ * - This relies on index.tsx having:
+ *   - <section id="tiers"> for the blurred tiers area (already true)
+ *   - <div id="start"> wrapping SignupForm (add if not present yet)
+ * - Header.tsx must support fallback links when onClick props are not provided
+ *   (i.e., render <Link href="/#tiers">Plans</Link> when no onClickPlans is passed).
+ */
+
 export default function PrivacyPage() {
   return (
     <main>
-      <Header />
+      {/* 
+        Header nav behavior on this page:
+        - We do NOT pass onClick handlers here.
+        - Header should fall back to Link href routes:
+          - Plans -> "/#tiers"
+          - Start Protection -> "/#start"
+        - Brand already routes to "/" via Link in Header component.
+      */}
+      <Header plansHref="/#tiers" startHref="/#start" />
 
       <section className="px-6 py-16 max-w-3xl mx-auto">
         <h1 className="text-3xl font-semibold text-amber mb-2">

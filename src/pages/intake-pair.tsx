@@ -61,6 +61,18 @@ export default function IntakePairPage() {
   const [p2Phone, setP2Phone] = useState("");
   const [p2Address, setP2Address] = useState("");
 
+  // ✅ Authorization + signatures (Pair = 2 signatures required when allowPerson2)
+  const [authAccepted, setAuthAccepted] = useState(false);
+  const [sig1Name, setSig1Name] = useState("");
+  const [sig2Name, setSig2Name] = useState("");
+  const [sigDateLocal, setSigDateLocal] = useState(() =>
+    new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+  );
+
   const person1Ok = useMemo(() => {
     return (
       p1FullName.trim() && p1Dob.trim() && p1Phone.trim() && p1Address.trim()
@@ -73,8 +85,35 @@ export default function IntakePairPage() {
     );
   }, [p2FullName, p2Dob, p2Phone, p2Address]);
 
-  // ✅ If they are not allowed person2, we only require person1
-  const canSubmit = allowPerson2 ? person1Ok && person2Ok : person1Ok;
+  const authorizationOk = useMemo(() => {
+    if (!authAccepted) return false;
+
+    // Person 1 signature is always required to authorize acting for person1
+    if (!sig1Name.trim()) return false;
+
+    // If the plan allows person2 (pair), require person2 signature too.
+    if (allowPerson2 && !sig2Name.trim()) return false;
+
+    return true;
+  }, [authAccepted, sig1Name, sig2Name, allowPerson2]);
+
+  // ✅ If they are not allowed person2, we only require person1 (and only 1 signature)
+  const canSubmit = allowPerson2
+    ? person1Ok && person2Ok && authorizationOk
+    : person1Ok && authorizationOk;
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSigDateLocal(
+        new Date().toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+      );
+    }, 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!code) return;
@@ -142,11 +181,13 @@ export default function IntakePairPage() {
   const submit = async () => {
     setMsg("");
 
+    const signedAtISO = new Date().toISOString();
+
     const person1: PersonPayload = {
-      fullName: p1FullName,
-      dob: p1Dob,
-      phone: p1Phone,
-      address: p1Address,
+      fullName: p1FullName.trim(),
+      dob: p1Dob.trim(),
+      phone: p1Phone.trim(),
+      address: p1Address.trim(),
     };
 
     // ✅ only include person2 if plan allows and at least something was entered
@@ -154,14 +195,36 @@ export default function IntakePairPage() {
       allowPerson2 &&
       (p2FullName.trim() || p2Dob.trim() || p2Phone.trim() || p2Address.trim())
         ? ({
-            fullName: p2FullName,
-            dob: p2Dob,
-            phone: p2Phone,
-            address: p2Address,
+            fullName: p2FullName.trim(),
+            dob: p2Dob.trim(),
+            phone: p2Phone.trim(),
+            address: p2Address.trim(),
           } as PersonPayload)
         : undefined;
 
-    const payload = { person1, ...(person2Maybe ? { person2: person2Maybe } : {}) };
+    // If allowPerson2 is true, your UI requires person2Ok, so person2Maybe will be defined.
+    const payload = {
+      person1,
+      ...(person2Maybe ? { person2: person2Maybe } : {}),
+      authorization: {
+        version: "ng-auth-v1",
+        accepted: true,
+        signedAtISO,
+        jurisdiction: "CA",
+        person1: {
+          signatureName: sig1Name.trim(),
+          signatureType: "typed",
+        },
+        ...(allowPerson2
+          ? {
+              person2: {
+                signatureName: sig2Name.trim(),
+                signatureType: "typed",
+              },
+            }
+          : {}),
+      },
+    };
 
     try {
       const res = await fetch("/api/intake/submit", {
@@ -189,6 +252,12 @@ export default function IntakePairPage() {
       // If we add server-side plan enforcement later:
       if (res.status === 403) {
         setMsg("Submit blocked: your plan does not allow a second person.");
+        return;
+      }
+
+      // If we enforce signatures server-side:
+      if (res.status === 400 && data.details) {
+        setMsg(String(data.details));
         return;
       }
 
@@ -222,7 +291,8 @@ export default function IntakePairPage() {
 
           {(planKey || planName) && (
             <p className="mt-3 text-xs text-[#E3DAC9]/55">
-              Plan: <span className="text-[#E3DAC9]/80">{planName || planKey}</span>
+              Plan:{" "}
+              <span className="text-[#E3DAC9]/80">{planName || planKey}</span>
             </p>
           )}
         </div>
@@ -309,10 +379,12 @@ export default function IntakePairPage() {
 
                 {!allowPerson2 && (
                   <div className="rounded-2xl border border-[#FFBF00]/35 bg-[#171710]/30 px-5 py-4 text-sm text-[#E3DAC9]/80">
-                    <div className="font-semibold text-[#FFBF00]">Second person locked</div>
+                    <div className="font-semibold text-[#FFBF00]">
+                      Second person locked
+                    </div>
                     <div className="mt-1">
-                      You’re on the Individual plan. If you intended to protect two people,
-                      you’ll need the Household Pair plan.
+                      You’re on the Individual plan. If you intended to protect
+                      two people, you’ll need the Household Pair plan.
                     </div>
                   </div>
                 )}
@@ -379,6 +451,88 @@ export default function IntakePairPage() {
                   />
                 </Section>
 
+                {/* ✅ NEW: Authorization + signatures */}
+                <Section
+                  title="Authorized Agent Designation & Signatures (Required)"
+                  subtitle={`Date: ${sigDateLocal}`}
+                >
+                  <div className="rounded-xl border border-[#1F3B1D]/60 bg-[#171710]/25 p-4 text-sm text-[#E3DAC9]/80 leading-relaxed">
+                    <p className="m-0">
+                      By signing below, each person listed authorizes{" "}
+                      <strong>NetGoblin</strong> to act as their{" "}
+                      <strong>authorized agent</strong> to submit privacy requests
+                      on their behalf, including requests to access, delete,
+                      correct, suppress, and opt out of the sale or sharing of
+                      personal information with data brokers, people-search sites,
+                      marketing databases, and other entities that may hold their
+                      personal information.
+                    </p>
+
+                    <ul className="mt-3 mb-0 pl-5 space-y-1 text-[#E3DAC9]/75">
+                      <li>
+                        We may ask either person to verify identity or confirm this
+                        authorization.
+                      </li>
+                      <li>
+                        Each signer affirms the submitted information is accurate
+                        to the best of their knowledge.
+                      </li>
+                      <li>
+                        Each signer consents to electronic signatures and agrees a
+                        typed signature is legally binding.
+                      </li>
+                      <li>
+                        This authorization remains effective until revoked in
+                        writing.
+                      </li>
+                    </ul>
+                  </div>
+
+                  <label className="flex items-start gap-3 select-none">
+                    <input
+                      type="checkbox"
+                      checked={authAccepted}
+                      onChange={(e) => setAuthAccepted(e.target.checked)}
+                      className="mt-1 h-4 w-4 accent-[#FFBF00]"
+                    />
+                    <span className="text-sm text-[#E3DAC9]/80">
+                      I agree and (if submitting for two people) confirm that both
+                      people listed authorize NetGoblin as described above.
+                    </span>
+                  </label>
+
+                  <Section title="Signature — Person 1" muted>
+                    <Field
+                      label="Signature (type full legal name)"
+                      value={sig1Name}
+                      onChange={setSig1Name}
+                      placeholder="Type Person 1 full legal name"
+                    />
+                    <p className="text-xs text-[#E3DAC9]/55">
+                      Use the exact legal name provided in Person 1.
+                    </p>
+                  </Section>
+
+                  <Section
+                    title={allowPerson2 ? "Signature — Person 2" : "Signature — Person 2 (Locked)"}
+                    muted
+                    subtitle={!allowPerson2 ? "Plan does not allow person 2" : undefined}
+                  >
+                    <Field
+                      label="Signature (type full legal name)"
+                      value={sig2Name}
+                      onChange={setSig2Name}
+                      placeholder="Type Person 2 full legal name"
+                      disabled={!allowPerson2}
+                    />
+                    <p className="text-xs text-[#E3DAC9]/55">
+                      {allowPerson2
+                        ? "Use the exact legal name provided in Person 2."
+                        : "Upgrade to Household Pair to enable Person 2 signature."}
+                    </p>
+                  </Section>
+                </Section>
+
                 <div className="pt-2 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                   <button
                     onClick={submit}
@@ -395,7 +549,7 @@ export default function IntakePairPage() {
                   </button>
 
                   <p className="text-xs text-[#E3DAC9]/60">
-                    By submitting, you confirm this information is accurate.
+                    By submitting, you confirm accuracy and provide authorized-agent consent.
                   </p>
                 </div>
 

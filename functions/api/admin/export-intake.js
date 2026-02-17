@@ -6,6 +6,8 @@ const json = (obj, status = 200, extraHeaders = {}) =>
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Expires": "0",
       ...extraHeaders,
     },
   });
@@ -16,7 +18,14 @@ function requireBasicAuth(request, env) {
   const pass = env.ADMIN_PASS;
 
   if (!user || !pass) {
-    return { ok: false, status: 500, body: { ok: false, error: "Server misconfigured: missing ADMIN_USER/ADMIN_PASS" } };
+    return {
+      ok: false,
+      status: 500,
+      body: {
+        ok: false,
+        error: "Server misconfigured: missing ADMIN_USER/ADMIN_PASS",
+      },
+    };
   }
 
   const auth = request.headers.get("Authorization") || "";
@@ -58,13 +67,25 @@ export const onRequestGet = async ({ request, env }) => {
 
   if (!baseUrl || !apiKey || !exportKey) {
     return json(
-      { ok: false, error: "Server misconfigured: missing GOBLINALIAS_URL / GOBLINALIAS_API_KEY / ADMIN_EXPORT_KEY" },
+      {
+        ok: false,
+        error:
+          "Server misconfigured: missing GOBLINALIAS_URL / GOBLINALIAS_API_KEY / ADMIN_EXPORT_KEY",
+      },
       500
     );
   }
 
-  // 3) Fetch from Fly (server-to-server)
-  const upstream = await fetch(`${baseUrl}/admin/export/intake.json`, {
+  // 3) Optional: allow explicit opt-in for signature fields (if/when upstream supports it)
+  const url = new URL(request.url);
+  const includeSignatures = url.searchParams.get("includeSignatures") === "1";
+
+  // Build upstream URL with optional query param
+  const upstreamUrl = new URL(`${baseUrl}/admin/export/intake.json`);
+  if (includeSignatures) upstreamUrl.searchParams.set("includeSignatures", "1");
+
+  // 4) Fetch from Fly (server-to-server)
+  const upstream = await fetch(upstreamUrl.toString(), {
     method: "GET",
     headers: {
       "x-api-key": apiKey,
@@ -91,7 +112,11 @@ export const onRequestGet = async ({ request, env }) => {
     return json(data ?? { ok: false, error: "Empty JSON from upstream" }, 200);
   } catch {
     return json(
-      { ok: false, error: "Upstream returned non-JSON", upstreamBodyPreview: (text || "").slice(0, 300) },
+      {
+        ok: false,
+        error: "Upstream returned non-JSON",
+        upstreamBodyPreview: (text || "").slice(0, 300),
+      },
       502
     );
   }

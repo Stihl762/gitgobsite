@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 type StartResp =
-  | { status: "PENDING"; requestId: string; planKey?: string | null; planName?: string | null }
+  | {
+      status: "PENDING";
+      requestId: string;
+      planKey?: string | null;
+      planName?: string | null;
+    }
   | { status: "SUBMITTED"; requestId: string }
   | { status: "INVALID"; requestId: string }
   | { status: "ERROR"; requestId?: string; details?: string };
@@ -47,13 +52,42 @@ export default function IntakeIndividualPage() {
   const [p1Phone, setP1Phone] = useState("");
   const [p1Address, setP1Address] = useState("");
 
+  // ✅ Authorization + signature (Individual = 1 signature)
+  const [authAccepted, setAuthAccepted] = useState(false);
+  const [sig1Name, setSig1Name] = useState("");
+  const [sig1DateLocal, setSig1DateLocal] = useState(() =>
+    new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+  );
+
   const person1Ok = useMemo(() => {
     return (
       p1FullName.trim() && p1Dob.trim() && p1Phone.trim() && p1Address.trim()
     );
   }, [p1FullName, p1Dob, p1Phone, p1Address]);
 
-  const canSubmit = person1Ok;
+  const authorizationOk = useMemo(() => {
+    return authAccepted && sig1Name.trim().length > 0;
+  }, [authAccepted, sig1Name]);
+
+  const canSubmit = person1Ok && authorizationOk;
+
+  useEffect(() => {
+    // keep date current if they leave the page open overnight etc.
+    const id = setInterval(() => {
+      setSig1DateLocal(
+        new Date().toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+      );
+    }, 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!code) return;
@@ -91,7 +125,6 @@ export default function IntakeIndividualPage() {
           setPlanName(pn);
 
           // ✅ If they bought PAIR, send them to the pair form automatically
-          // (This prevents pair customers from filling the individual form by mistake.)
           if (pk === "firstflame_pair") {
             router.replace(`/intake-pair?code=${encodeURIComponent(code)}`);
             return;
@@ -123,14 +156,29 @@ export default function IntakeIndividualPage() {
   const submit = async () => {
     setMsg("");
 
+    // You want the server to record IP/user-agent/time; this client timestamp is still useful for UX/audit.
+    const signedAtISO = new Date().toISOString();
+
     const person1: PersonPayload = {
-      fullName: p1FullName,
-      dob: p1Dob,
-      phone: p1Phone,
-      address: p1Address,
+      fullName: p1FullName.trim(),
+      dob: p1Dob.trim(),
+      phone: p1Phone.trim(),
+      address: p1Address.trim(),
     };
 
-    const payload = { person1 };
+    const payload = {
+      person1,
+      authorization: {
+        version: "ng-auth-v1",
+        accepted: true,
+        signedAtISO,
+        jurisdiction: "CA",
+        person1: {
+          signatureName: sig1Name.trim(),
+          signatureType: "typed",
+        },
+      },
+    };
 
     try {
       const res = await fetch("/api/intake/submit", {
@@ -158,6 +206,12 @@ export default function IntakeIndividualPage() {
       // ✅ helpful if we implement server-side plan enforcement (403 w/ status)
       if (res.status === 403) {
         setMsg("Submit blocked: your plan does not allow this intake payload.");
+        return;
+      }
+
+      // ✅ if you enforce signatures server-side, return 400 with details; surface it
+      if (res.status === 400 && data.details) {
+        setMsg(String(data.details));
         return;
       }
 
@@ -189,10 +243,10 @@ export default function IntakeIndividualPage() {
             This link is single-use. Complete it once, then we begin the hunt.
           </p>
 
-          {/* Debug during rollout (safe — doesn’t reveal the code). Remove later if you want. */}
           {(planKey || planName) && (
             <p className="mt-3 text-xs text-[#E3DAC9]/55">
-              Plan: <span className="text-[#E3DAC9]/80">{planName || planKey}</span>
+              Plan:{" "}
+              <span className="text-[#E3DAC9]/80">{planName || planKey}</span>
             </p>
           )}
         </div>
@@ -302,6 +356,67 @@ export default function IntakeIndividualPage() {
                   />
                 </Section>
 
+                {/* ✅ NEW: Authorization block */}
+                <Section
+                  title="Authorized Agent Designation & Signature (Required)"
+                  subtitle={`Date: ${sig1DateLocal}`}
+                >
+                  <div className="rounded-xl border border-[#1F3B1D]/60 bg-[#171710]/25 p-4 text-sm text-[#E3DAC9]/80 leading-relaxed">
+                    <p className="m-0">
+                      By signing below, I authorize <strong>NetGoblin</strong> to
+                      act as my <strong>authorized agent</strong> to submit privacy
+                      requests on my behalf, including requests to access, delete,
+                      correct, suppress, and opt out of the sale or sharing of my
+                      personal information with data brokers, people-search sites,
+                      marketing databases, and other entities that may hold my
+                      personal information.
+                    </p>
+
+                    <ul className="mt-3 mb-0 pl-5 space-y-1 text-[#E3DAC9]/75">
+                      <li>
+                        I understand that some organizations may ask to verify my
+                        identity and/or confirm that I granted this permission.
+                      </li>
+                      <li>
+                        I affirm the information I submit is accurate to the best
+                        of my knowledge.
+                      </li>
+                      <li>
+                        I consent to the use of electronic signatures and agree
+                        that my typed signature is legally binding.
+                      </li>
+                      <li>
+                        This authorization remains effective until I revoke it in
+                        writing.
+                      </li>
+                    </ul>
+                  </div>
+
+                  <label className="flex items-start gap-3 select-none">
+                    <input
+                      type="checkbox"
+                      checked={authAccepted}
+                      onChange={(e) => setAuthAccepted(e.target.checked)}
+                      className="mt-1 h-4 w-4 accent-[#FFBF00]"
+                    />
+                    <span className="text-sm text-[#E3DAC9]/80">
+                      I agree and authorize NetGoblin to act as my Authorized
+                      Agent as described above.
+                    </span>
+                  </label>
+
+                  <Field
+                    label="Signature (type your full legal name)"
+                    value={sig1Name}
+                    onChange={setSig1Name}
+                    placeholder="Type your full legal name"
+                  />
+
+                  <p className="text-xs text-[#E3DAC9]/55">
+                    Tip: Use the exact legal name you provided above.
+                  </p>
+                </Section>
+
                 <div className="pt-2 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                   <button
                     onClick={submit}
@@ -318,7 +433,8 @@ export default function IntakeIndividualPage() {
                   </button>
 
                   <p className="text-xs text-[#E3DAC9]/60">
-                    By submitting, you confirm this information is accurate.
+                    By submitting, you confirm accuracy and provide authorized-agent
+                    consent.
                   </p>
                 </div>
 

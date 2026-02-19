@@ -31,7 +31,7 @@ export default function TrustSection() {
     },
     {
       q: "Can I cancel anytime?",
-      a: "Yes. No tricks or contracts. You stay as long as you need our protection, then your goblins stand down. Reach out to our support email will questions or requests.",
+      a: "Yes. No tricks or contracts. You stay as long as you need our protection, then your goblins stand down. Reach out to our support email with questions or requests.",
     },
   ];
 

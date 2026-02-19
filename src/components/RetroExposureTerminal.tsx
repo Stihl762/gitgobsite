@@ -6,6 +6,7 @@ type Phase = "init" | "stream" | "protect" | "protected";
 
 const AMBER = "#FFB000";
 const BG = "#282828";
+const SOFT_GREY = "rgba(255,255,255,0.70)";
 
 const TOTAL_MS = 20_000;
 
@@ -225,7 +226,7 @@ export default function RetroExposureTerminal() {
         {/* Header (non-scrolling) */}
         <div
           className="flex items-center justify-between text-[10px] sm:text-xs tracking-widest mb-2 shrink-0"
-          style={{ color: "rgba(255,255,255,0.70)" }}
+          style={{ color: SOFT_GREY }}
         >
           <span>NETGOBLIN // EXPOSURE SCAN</span>
           <span style={{ color: "rgba(255,255,255,0.55)" }}>Simulation mode</span>
@@ -234,10 +235,9 @@ export default function RetroExposureTerminal() {
         {/* Body (scrolling ONLY inside terminal) */}
         <div
           ref={terminalScrollRef}
-          className="flex-1 overflow-y-auto pr-2 terminal-scroll"
-          style={{ scrollbarColor: `rgba(255,255,255,0.70) rgba(255,255,255,0.10)` }}
+          className="flex-1 min-h-0 overflow-y-auto pr-2 terminal-scroll"
+          style={{ scrollbarColor: `${SOFT_GREY} rgba(255,255,255,0.10)` }}
         >
-
           <div className="text-[11px] sm:text-sm leading-[1.35]" style={{ color: AMBER }}>
             {lines.map((l, idx) => (
               <div key={idx} className="whitespace-pre-wrap">
@@ -254,25 +254,22 @@ export default function RetroExposureTerminal() {
               </div>
             )}
 
+            {/* ✅ Protect phase: label on one line, bar UNDER it, bar colored soft grey */}
             {phase === "protect" && (
-              <div className="mt-3 space-y-2">
-                <div className="flex gap-3">
-                  <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
-                    Dispatching goblin agents
-                  </span>
-                  <span>{asciiBar(bars.a)}</span>
+              <div className="mt-4 space-y-4">
+                <div>
+                  <div style={{ color: SOFT_GREY }}>Dispatching goblin agents</div>
+                  <div style={{ color: SOFT_GREY }}>{asciiBar(bars.a)}</div>
                 </div>
-                <div className="flex gap-3">
-                  <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
-                    Submitting protection requests
-                  </span>
-                  <span>{asciiBar(bars.b)}</span>
+
+                <div>
+                  <div style={{ color: SOFT_GREY }}>Submitting protection requests</div>
+                  <div style={{ color: SOFT_GREY }}>{asciiBar(bars.b)}</div>
                 </div>
-                <div className="flex gap-3">
-                  <span className="w-[210px] sm:w-[260px]" style={{ color: "rgba(255,255,255,0.70)" }}>
-                    Awaiting confirmation
-                  </span>
-                  <span>{asciiBar(bars.c)}</span>
+
+                <div>
+                  <div style={{ color: SOFT_GREY }}>Awaiting confirmation</div>
+                  <div style={{ color: SOFT_GREY }}>{asciiBar(bars.c)}</div>
                 </div>
               </div>
             )}

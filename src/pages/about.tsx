@@ -18,7 +18,7 @@ export default function AboutPage() {
             Families reduced to listings. Profiles. Inventory.
           </p>
 
-          <p>That was the moment the Goblin chose to descend.</p>
+          <p>That was the moment the Goblin chose to act.</p>
 
           <p>
             He studied the tunnels beneath the surface — broker registries, removal statutes, the fine print most never

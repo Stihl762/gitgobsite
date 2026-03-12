@@ -15,14 +15,14 @@ const PLANS: Record<
 > = {
   firstflame_individual: {
     name: "First Flame: Individual",
-    priceLabel: "$49/mo",
+    priceLabel: "$20/mo",
     priceCents: 4900,
     seats: 1,
     subtitle: "For one person",
   },
   firstflame_pair: {
     name: "First Flame: Household Pair",
-    priceLabel: "$79/mo",
+    priceLabel: "$35/mo",
     priceCents: 7900,
     seats: 2,
     subtitle: "For two people (same household)",
